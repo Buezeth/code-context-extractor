@@ -1,0 +1,132 @@
+{
+  "name": "code-context-extractor",
+  "displayName": "Code Context Extractor",
+  "description": "Used to extract code context into a txt file that can be used to feed AI ",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:code-context-extractor.generate",
+    "onView:code-context-extractor-view" 
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "code-context-extractor.loadTemplateRules",
+        "title": "Generate Project Context File"
+      }
+    ],
+    "configuration": {
+      "title": "Code Context Extractor",
+      "properties": {
+        "code-context-extractor.useGitignoreTemplates": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically suggest and use .gitignore templates from GitHub to determine which files to exclude."
+        },
+        "code-context-extractor.excludeDirs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "vendor",
+            ".git",
+            "node_modules",
+            ".next",
+            ".vscode",
+            "dist",
+            "out"
+          ],
+          "description": "List of directory names to exclude from the context file."
+        },
+        "code-context-extractor.excludeFiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "package-lock.json"
+          ],
+          "description": "List of specific file names to exclude from the context file."
+        },
+        "code-context-extractor.allowedExtensions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            ".js",
+            ".tsx",
+            ".ts",
+            ".jsx",
+            ".css",
+            ".html",
+            ".local",
+            ".json",
+            ".sql",
+            ".mjs",
+            ".md"
+          ],
+          "description": "List of file extensions to include in the context file."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "code-context-extractor-sidebar",
+          "title": "Code Context Extractor",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+    "code-context-extractor-sidebar": [
+      {
+        "id": "code-context-extractor-view",
+        "name": "Generator",
+        "type": "webview",
+        "icon": "media/icon.svg"
+      }
+    ]
+  }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && npm run lint && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "npm run check-types && npm run lint && node esbuild.js --production",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@types/node-fetch": "^2.6.13",
+    "@types/vscode": "^1.105.0",
+    "@typescript-eslint/eslint-plugin": "^8.45.0",
+    "@typescript-eslint/parser": "^8.45.0",
+    "@vscode/test-cli": "^0.0.11",
+    "@vscode/test-electron": "^2.5.2",
+    "esbuild": "^0.25.10",
+    "eslint": "^9.36.0",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "ignore": "^7.0.5",
+    "node-fetch": "^2.7.0"
+  }
+}

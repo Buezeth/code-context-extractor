@@ -1,0 +1,35 @@
+/* media/main.css */
+body {
+    font-family: var(--vscode-font-family);
+    padding: 10px;
+}
+
+button {
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: 1px solid var(--vscode-button-border);
+    padding: 8px 12px;
+    cursor: pointer;
+    width: 100%;
+    margin-top: 10px;
+}
+
+button:hover {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+#rules-container {
+    margin-top: 15px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.rule-item {
+    display: flex;
+    align-items: center;
+    padding: 2px 0;
+}
+
+.rule-item input {
+    margin-right: 8px;
+}
