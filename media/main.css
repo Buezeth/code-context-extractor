@@ -1,7 +1,7 @@
 /* media/main.css */
 body {
     font-family: var(--vscode-font-family);
-    padding: 10px;
+    padding: 0 10px;
 }
 
 button {
@@ -19,8 +19,8 @@ button:hover {
 }
 
 #rules-container {
-    margin-top: 15px;
-    max-height: 400px;
+    margin-top: 10px;
+    max-height: 300px;
     overflow-y: auto;
 }
 
@@ -32,4 +32,56 @@ button:hover {
 
 .rule-item input {
     margin-right: 8px;
+}
+
+.hidden {
+    display: none;
+}
+
+#select-all-container {
+    margin-top: 10px;
+}
+
+#add-rule-container {
+    display: flex;
+    margin-top: 10px;
+}
+
+#new-rule-input {
+    flex-grow: 1;
+    background-color: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border);
+    padding: 5px;
+}
+
+#add-rule-btn {
+    flex-grow: 0;
+    width: 40px;
+    margin-top: 0;
+    margin-left: 5px;
+    padding: 5px;
+}
+
+/* --- NEW STYLES --- */
+h2 {
+    margin-bottom: 5px;
+}
+
+h3 {
+    margin-top: 20px;
+    margin-bottom: 5px;
+}
+
+hr {
+    border: none;
+    border-top: 1px solid var(--vscode-editor-widget-border);
+    margin: 15px 0;
+}
+
+.description {
+    font-size: var(--vscode-font-size);
+    color: var(--vscode-description-foreground);
+    margin-top: 0;
+    margin-bottom: 5px;
 }
