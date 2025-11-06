@@ -85,3 +85,11 @@ hr {
     margin-top: 0;
     margin-bottom: 5px;
 }
+
+/* --- ADD THIS NEW RULE FOR DISABLED BUTTONS --- */
+button:disabled {
+    cursor: not-allowed;
+    background-color: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-disabledForeground);
+    opacity: 0.7;
+}

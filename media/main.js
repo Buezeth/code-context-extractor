@@ -17,8 +17,6 @@
     const generateBtn = document.getElementById('generate-btn');
 
     // --- State Management ---
-
-    // NEW: Function to get the current state of the UI
     function getCurrentState() {
         const rules = [];
         const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]');
@@ -34,7 +32,6 @@
         };
     }
 
-    // NEW: Function to send the current state to the extension to be saved
     function saveState() {
         vscode.postMessage({
             type: 'save-state',
@@ -46,10 +43,10 @@
     window.addEventListener('message', event => {
         const message = event.data;
         switch (message.type) {
-            case 'update-rules':
-                // This is triggered by "Load/Refresh" button
+            case 'update-rules': {
                 const rules = message.rules.map(rule => ({ value: rule, checked: true }));
                 populateRulesList(rules);
+
                 if (rules.length > 0) {
                     refineSection.classList.remove('hidden');
                     generateSection.classList.remove('hidden');
@@ -57,11 +54,15 @@
                     refineSection.classList.add('hidden');
                     generateSection.classList.add('hidden');
                 }
-                saveState(); // Save state after loading new rules
+                
+                // --- Re-enable the button and restore its text ---
+                loadTemplateBtn.disabled = false;
+                loadTemplateBtn.textContent = 'Load / Refresh Ignore Rules';
+
+                saveState();
                 break;
-            
-            case 'restore-state':
-                // This is triggered when the webview becomes visible
+            }
+            case 'restore-state': {
                 const state = message.state;
                 if (state && state.rules) {
                     populateRulesList(state.rules);
@@ -74,11 +75,15 @@
                     generateSection.classList.add('hidden');
                 }
                 break;
+            }
         }
     });
 
     // --- Event Listeners for buttons ---
     loadTemplateBtn.addEventListener('click', () => {
+        // --- Disable the button and show loading text ---
+        loadTemplateBtn.disabled = true;
+        loadTemplateBtn.textContent = 'Loading templates...';
         vscode.postMessage({ type: 'load-template' });
     });
 
@@ -99,15 +104,14 @@
             if (newRule.startsWith('.') && !newRule.includes('*') && !newRule.includes('/')) {
                 newRule = '*' + newRule;
             }
-            // Check if rule already exists to avoid duplicates
             if (!document.getElementById(newRule)) {
                 const ruleItem = createRuleItem(newRule, true);
                 rulesContainer.appendChild(ruleItem);
                 newRuleInput.value = '';
                 updateSelectAllState();
-                saveState(); // Save state after adding a rule
+                saveState();
             } else {
-                newRuleInput.value = ''; // Clear input even if duplicate
+                newRuleInput.value = '';
             }
         }
     }
@@ -124,13 +128,13 @@
         const isChecked = e.target.checked;
         const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]');
         checkboxes.forEach(cb => cb.checked = isChecked);
-        saveState(); // Save state after toggling all
+        saveState();
     });
 
     rulesContainer.addEventListener('change', (e) => {
         if (e.target.matches('input[type="checkbox"]')) {
             updateSelectAllState();
-            saveState(); // Save state on individual checkbox change
+            saveState();
         }
     });
 
@@ -158,7 +162,6 @@
             return;
         }
         rules.forEach(rule => {
-            // rule is now an object { value, checked }
             const ruleItem = createRuleItem(rule.value, rule.checked);
             rulesContainer.appendChild(ruleItem);
         });

@@ -58,14 +58,40 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.window.showWarningMessage('Could not fetch .gitignore templates from GitHub. Using local rules only.');
         } else {
             const detected = await detectProjectTypes(projectRoot);
-            const selectedTemplate = await vscode.window.showQuickPick(templates, {
+
+            // --- NEW LOGIC TO REORDER TEMPLATES ---
+            const detectedSet = new Set(detected.map(d => d.toLowerCase()));
+            const suggestedTemplates: vscode.QuickPickItem[] = [];
+            const otherTemplates: vscode.QuickPickItem[] = [];
+
+            // Sort all templates alphabetically first
+            templates.sort((a, b) => a.localeCompare(b));
+
+            // Partition the list into "suggested" and "others"
+            templates.forEach(template => {
+                if (detectedSet.has(template.toLowerCase())) {
+                    suggestedTemplates.push({
+                        label: template,
+                        description: '(Suggested for your project)'
+                    });
+                } else {
+                    otherTemplates.push({ label: template });
+                }
+            });
+
+            // Combine them, with suggestions at the top
+            const allItems = [...suggestedTemplates, ...otherTemplates];
+            // --- END OF NEW LOGIC ---
+
+            const selectedTemplate = await vscode.window.showQuickPick(allItems, {
                 canPickMany: false,
                 placeHolder: 'Select a template to add its rules (optional)',
-                title: detected.length > 0 ? `Suggested: ${detected.join(', ')}` : 'Choose a template'
+                title: 'Choose a .gitignore Template' // Title is simpler now
             });
 
             if (selectedTemplate) {
-                const content = await getTemplateContent(selectedTemplate);
+                // We get a QuickPickItem back, so we need its label
+                const content = await getTemplateContent(selectedTemplate.label);
                 addRulesFromString(content);
             }
         }
