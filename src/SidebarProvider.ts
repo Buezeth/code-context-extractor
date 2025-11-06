@@ -68,11 +68,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
             <hr>
 
-            <h3>Step 1: Choose a Base Filter</h3>
+            <h3>Step 1: Load Ignore Rules</h3>
             <p class="description">
-                Start by loading a standard .gitignore template based on your project's technology. This will provide a good starting list of files and folders to exclude.
+                Load ignore rules from your project's .gitignore, VS Code settings, and optionally add rules from a standard template.
             </p>
-            <button id="load-template-btn">Load Project Type Template</button>
+            <button id="load-template-btn">Load / Refresh Ignore Rules</button>
 
             <!-- This entire section is hidden until a template is loaded -->
             <div id="refine-section" class="hidden">

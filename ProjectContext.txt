@@ -19,7 +19,6 @@ src\test/
   generate_llm_data.js
   package.json
   README.md
-  tempCodeRunnerFile.js
   tsconfig.json
   vsc-extension-quickstart.md
 
@@ -7219,12 +7218,10 @@ var fs2 = __toESM(require("fs"));
 // src/contextGenerator.ts
 var fs = __toESM(require("fs"));
 var path = __toESM(require("path"));
-function generateProjectContextText(projectPath, outputFile, config, ig) {
+function generateProjectContextText(projectPath, outputFile, ig) {
   return new Promise((resolve, reject) => {
     try {
-      let shouldProcessFile2 = function(fileName) {
-        return config.allowedExtensions.some((ext) => fileName.endsWith(ext));
-      }, walkDir2 = function(dir, indent = "") {
+      let walkDir2 = function(dir, indent = "") {
         let entries;
         try {
           entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -7234,7 +7231,7 @@ function generateProjectContextText(projectPath, outputFile, config, ig) {
         entries.sort((a, b) => a.name.localeCompare(b.name));
         for (const entry of entries) {
           const fullPath = path.join(dir, entry.name);
-          const relativePath = path.relative(projectPath, fullPath);
+          const relativePath = path.relative(projectPath, fullPath).replace(/\\/g, "/");
           if (ig.ignores(relativePath)) {
             continue;
           }
@@ -7254,15 +7251,15 @@ function generateProjectContextText(projectPath, outputFile, config, ig) {
         entries.sort((a, b) => a.name.localeCompare(b.name));
         for (const entry of entries) {
           const fullPath = path.join(dir, entry.name);
-          const relativePath = path.relative(projectPath, fullPath);
+          const relativePath = path.relative(projectPath, fullPath).replace(/\\/g, "/");
           if (ig.ignores(relativePath)) {
             continue;
           }
           if (entry.isDirectory()) {
             writeIncludedFileContents2(fullPath);
-          } else if (entry.isFile() && shouldProcessFile2(entry.name)) {
+          } else if (entry.isFile()) {
             outputStream.write(`
---- ${relativePath.replace(/\\/g, "/")} ---
+--- ${relativePath} ---
 `);
             try {
               const content = fs.readFileSync(fullPath, "utf8");
@@ -7272,7 +7269,7 @@ function generateProjectContextText(projectPath, outputFile, config, ig) {
           }
         }
       };
-      var shouldProcessFile = shouldProcessFile2, walkDir = walkDir2, writeIncludedFileContents = writeIncludedFileContents2;
+      var walkDir = walkDir2, writeIncludedFileContents = writeIncludedFileContents2;
       const outputStream = fs.createWriteStream(outputFile, { encoding: "utf8" });
       outputStream.write("--- START OF FILE ProjectContext.txt ---\n\n");
       outputStream.write("--- Folder Structure ---\n");
@@ -7356,18 +7353,26 @@ var SidebarProvider = class {
   }
   static viewType = "code-context-extractor-view";
   _view;
-  resolveWebviewView(webviewView, context, _token) {
+  async resolveWebviewView(webviewView, context, _token) {
     this._view = webviewView;
     webviewView.webview.options = {
-      // Allow scripts in the webview
       enableScripts: true,
       localResourceRoots: [this._extensionUri]
     };
     webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
-    webviewView.webview.onDidReceiveMessage((data) => {
+    webviewView.webview.onDidReceiveMessage(async (data) => {
       switch (data.type) {
         case "generate": {
-          vscode2.commands.executeCommand("code-context-extractor.generate");
+          vscode2.commands.executeCommand("code-context-extractor.generate", {
+            selectedRules: data.rules
+          });
+          break;
+        }
+        case "load-template": {
+          const rules = await vscode2.commands.executeCommand("code-context-extractor.loadTemplateRules");
+          if (rules && this._view) {
+            this._view.webview.postMessage({ type: "update-rules", rules });
+          }
           break;
         }
       }
@@ -7378,21 +7383,64 @@ var SidebarProvider = class {
     const styleUri = webview.asWebviewUri(vscode2.Uri.joinPath(this._extensionUri, "media", "main.css"));
     const nonce = getNonce();
     return `<!DOCTYPE html>
-			<html lang="en">
-			<head>
-				<meta charset="UTF-8">
-                <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
-				<meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <link href="${styleUri}" rel="stylesheet">
-				<title>Code Context</title>
-			</head>
-			<body>
-                <h3>Code Context Generator</h3>
-                <p>Click the button to generate the ProjectContext.txt file for your current workspace.</p>
-				<button id="generate-btn">Generate</button>
-                <script nonce="${nonce}" src="${scriptUri}"></script>
-			</body>
-			</html>`;
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <link href="${styleUri}" rel="stylesheet">
+            <title>Code Context Extractor</title>
+        </head>
+        <body>
+            <h2>Code Context Extractor</h2>
+            <p class="description">
+                Create a single text file with your project's context, optimized for feeding into AI models.
+            </p>
+
+            <hr>
+
+            <h3>Step 1: Choose a Base Filter</h3>
+            <p class="description">
+                Start by loading a standard .gitignore template based on your project's technology. This will provide a good starting list of files and folders to exclude.
+            </p>
+            <button id="load-template-btn">Load Project Type Template</button>
+
+            <!-- This entire section is hidden until a template is loaded -->
+            <div id="refine-section" class="hidden">
+                <hr>
+                <h3>Step 2: Refine Files to Exclude</h3>
+                <p class="description">
+                    Uncheck any items you want to include in the context file. Add any other files or folders you wish to exclude.
+                </p>
+
+                <div id="select-all-container">
+                    <input type="checkbox" id="select-all-cb">
+                    <label for="select-all-cb">Select / Deselect All</label>
+                </div>
+                
+                <div id="rules-container">
+                    <!-- Checkboxes will be dynamically inserted here -->
+                </div>
+
+                <div id="add-rule-container">
+                    <input type="text" id="new-rule-input" placeholder="Add custom rule (e.g., *.log or temp/)"/>
+                    <button id="add-rule-btn">+</button>
+                </div>
+            </div>
+
+            <!-- This section is also hidden until a template is loaded -->
+            <div id="generate-section" class="hidden">
+                <hr>
+                <h3>Step 3: Generate the File</h3>
+                <p class="description">
+                    This will create a 'ProjectContext.txt' file in your workspace root.
+                </p>
+                <button id="generate-btn">Generate Context File</button>
+            </div>
+
+            <script nonce="${nonce}" src="${scriptUri}"></script>
+        </body>
+        </html>`;
   }
 };
 function getNonce() {
@@ -7408,12 +7456,33 @@ function getNonce() {
 function activate(context) {
   const sidebarProvider = new SidebarProvider(context.extensionUri);
   context.subscriptions.push(
-    vscode3.window.registerWebviewViewProvider(
-      SidebarProvider.viewType,
-      sidebarProvider
-    )
+    vscode3.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider)
   );
-  const commandDisposable = vscode3.commands.registerCommand("code-context-extractor.generate", async () => {
+  const loadTemplateCommand = vscode3.commands.registerCommand("code-context-extractor.loadTemplateRules", async () => {
+    const workspaceFolders = vscode3.workspace.workspaceFolders;
+    if (!workspaceFolders) {
+      vscode3.window.showErrorMessage("No workspace folder is open.");
+      return;
+    }
+    const projectRoot = workspaceFolders[0].uri.fsPath;
+    const templates = await getAvailableTemplates();
+    if (templates.length === 0) {
+      vscode3.window.showWarningMessage("Could not fetch .gitignore templates from GitHub.");
+      return [];
+    }
+    const detected = await detectProjectTypes(projectRoot);
+    const selectedTemplate = await vscode3.window.showQuickPick(templates, {
+      canPickMany: false,
+      placeHolder: "Select a .gitignore template to load",
+      title: detected.length > 0 ? `Suggested: ${detected.join(", ")}` : "Choose a template"
+    });
+    if (selectedTemplate) {
+      const content = await getTemplateContent(selectedTemplate);
+      return content.split(/\r?\n/).filter((line) => line.trim() && !line.trim().startsWith("#"));
+    }
+    return [];
+  });
+  const generateCommand = vscode3.commands.registerCommand("code-context-extractor.generate", async (args) => {
     const workspaceFolders = vscode3.workspace.workspaceFolders;
     if (!workspaceFolders) {
       vscode3.window.showErrorMessage("No workspace folder is open.");
@@ -7422,35 +7491,19 @@ function activate(context) {
     const projectRoot = workspaceFolders[0].uri.fsPath;
     const outputFilePath = path3.join(projectRoot, "ProjectContext.txt");
     const configuration = vscode3.workspace.getConfiguration("code-context-extractor");
-    const useGitignore = configuration.get("useGitignoreTemplates", true);
     const ig = (0, import_ignore.default)();
     const excludeDirs = configuration.get("excludeDirs", []);
     const excludeFiles = configuration.get("excludeFiles", []);
     ig.add(excludeDirs.map((dir) => `${dir}/`));
     ig.add(excludeFiles);
-    if (useGitignore) {
-      const templates = await getAvailableTemplates();
-      const detected = await detectProjectTypes(projectRoot);
-      if (templates.length > 0) {
-        const selectedTemplate = await vscode3.window.showQuickPick(templates, {
-          canPickMany: false,
-          placeHolder: "Select a .gitignore template (or press ESC to skip)",
-          title: detected.length > 0 ? `Suggested: ${detected.join(", ")}` : "Choose a template"
-        });
-        if (selectedTemplate) {
-          const content = await getTemplateContent(selectedTemplate);
-          ig.add(content);
-        }
-      }
+    if (args?.selectedRules) {
+      ig.add(args.selectedRules);
     }
     const localGitignorePath = path3.join(projectRoot, ".gitignore");
     if (fs2.existsSync(localGitignorePath)) {
       const localGitignoreContent = fs2.readFileSync(localGitignorePath, "utf8");
       ig.add(localGitignoreContent);
     }
-    const config = {
-      allowedExtensions: configuration.get("allowedExtensions", [])
-    };
     await vscode3.window.withProgress({
       location: vscode3.ProgressLocation.Notification,
       title: "Generating Project Context",
@@ -7458,7 +7511,7 @@ function activate(context) {
     }, async (progress) => {
       progress.report({ message: "Scanning files..." });
       try {
-        await generateProjectContextText(projectRoot, outputFilePath, config, ig);
+        await generateProjectContextText(projectRoot, outputFilePath, ig);
         vscode3.window.showInformationMessage("Successfully generated ProjectContext.txt!");
         await vscode3.window.showTextDocument(vscode3.Uri.file(outputFilePath));
       } catch (error) {
@@ -7466,7 +7519,7 @@ function activate(context) {
       }
     });
   });
-  context.subscriptions.push(commandDisposable);
+  context.subscriptions.push(loadTemplateCommand, generateCommand);
 }
 function deactivate() {
 }
@@ -7482,7 +7535,7 @@ function deactivate() {
 /* media/main.css */
 body {
     font-family: var(--vscode-font-family);
-    padding: 10px;
+    padding: 0 10px;
 }
 
 button {
@@ -7499,22 +7552,190 @@ button:hover {
     background-color: var(--vscode-button-hoverBackground);
 }
 
+#rules-container {
+    margin-top: 10px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.rule-item {
+    display: flex;
+    align-items: center;
+    padding: 2px 0;
+}
+
+.rule-item input {
+    margin-right: 8px;
+}
+
+.hidden {
+    display: none;
+}
+
+#select-all-container {
+    margin-top: 10px;
+}
+
+#add-rule-container {
+    display: flex;
+    margin-top: 10px;
+}
+
+#new-rule-input {
+    flex-grow: 1;
+    background-color: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border);
+    padding: 5px;
+}
+
+#add-rule-btn {
+    flex-grow: 0;
+    width: 40px;
+    margin-top: 0;
+    margin-left: 5px;
+    padding: 5px;
+}
+
+/* --- NEW STYLES --- */
+h2 {
+    margin-bottom: 5px;
+}
+
+h3 {
+    margin-top: 20px;
+    margin-bottom: 5px;
+}
+
+hr {
+    border: none;
+    border-top: 1px solid var(--vscode-editor-widget-border);
+    margin: 15px 0;
+}
+
+.description {
+    font-size: var(--vscode-font-size);
+    color: var(--vscode-description-foreground);
+    margin-top: 0;
+    margin-bottom: 5px;
+}
+
 --- media\main.js ---
 // media/main.js
-
-// This script will be run within the webview itself
 (function () {
-    // Get a reference to the VS Code API
     const vscode = acquireVsCodeApi();
 
-    const generateButton = document.getElementById('generate-btn');
+    // --- Get references to all our UI elements ---
+    const loadTemplateBtn = document.getElementById('load-template-btn');
+    const rulesContainer = document.getElementById('rules-container');
+    
+    // Section containers
+    const refineSection = document.getElementById('refine-section');
+    const generateSection = document.getElementById('generate-section');
 
-    generateButton.addEventListener('click', () => {
-        // Send a message to the extension
-        vscode.postMessage({
-            type: 'generate'
-        });
+    // Interactive elements within the sections
+    const selectAllCb = document.getElementById('select-all-cb');
+    const newRuleInput = document.getElementById('new-rule-input');
+    const addRuleBtn = document.getElementById('add-rule-btn');
+    const generateBtn = document.getElementById('generate-btn');
+
+    // --- Handle messages FROM the extension ---
+    window.addEventListener('message', event => {
+        const message = event.data;
+        if (message.type === 'update-rules') {
+            const rules = message.rules;
+            populateRulesList(rules);
+
+            // If rules were loaded, show the next steps
+            if (rules && rules.length > 0) {
+                refineSection.classList.remove('hidden');
+                generateSection.classList.remove('hidden');
+            } else {
+                // If no rules (e.g., user cancelled), hide the sections
+                refineSection.classList.add('hidden');
+                generateSection.classList.add('hidden');
+            }
+        }
     });
+
+    // --- Event Listeners for buttons ---
+    loadTemplateBtn.addEventListener('click', () => {
+        vscode.postMessage({ type: 'load-template' });
+    });
+
+    generateBtn.addEventListener('click', () => {
+        const selectedRules = [];
+        const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]');
+        checkboxes.forEach(cb => {
+            if (cb.checked) {
+                selectedRules.push(cb.value);
+            }
+        });
+        vscode.postMessage({ type: 'generate', rules: selectedRules });
+    });
+
+    addRuleBtn.addEventListener('click', () => {
+        const newRule = newRuleInput.value.trim();
+        if (newRule) {
+            const ruleItem = createRuleItem(newRule, true);
+            rulesContainer.appendChild(ruleItem);
+            newRuleInput.value = '';
+            updateSelectAllState();
+        }
+    });
+
+    // --- Event Listeners for checkboxes ---
+    selectAllCb.addEventListener('change', (e) => {
+        const isChecked = e.target.checked;
+        const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]');
+        checkboxes.forEach(cb => cb.checked = isChecked);
+    });
+
+    rulesContainer.addEventListener('change', (e) => {
+        if (e.target.matches('input[type="checkbox"]')) {
+            updateSelectAllState();
+        }
+    });
+
+    // --- Helper Functions ---
+    function createRuleItem(rule, isChecked) {
+        const ruleItem = document.createElement('div');
+        ruleItem.className = 'rule-item';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.id = rule;
+        checkbox.value = rule;
+        checkbox.checked = isChecked;
+        const label = document.createElement('label');
+        label.htmlFor = rule;
+        label.textContent = rule;
+        ruleItem.appendChild(checkbox);
+        ruleItem.appendChild(label);
+        return ruleItem;
+    }
+
+    function populateRulesList(rules) {
+        rulesContainer.innerHTML = '';
+        if (!rules || rules.length === 0) {
+            selectAllCb.checked = false;
+            return;
+        }
+        rules.forEach(rule => {
+            const ruleItem = createRuleItem(rule, true);
+            rulesContainer.appendChild(ruleItem);
+        });
+        selectAllCb.checked = true;
+    }
+
+    function updateSelectAllState() {
+        const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]');
+        if (checkboxes.length === 0) {
+            selectAllCb.checked = false;
+            return;
+        }
+        const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+        selectAllCb.checked = allChecked;
+    }
 }());
 
 --- src\test\extension.test.ts ---
@@ -7540,17 +7761,12 @@ suite('Extension Test Suite', () => {
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type { Ignore } from 'ignore'; // Import the type for TypeScript
-
-interface GeneratorConfig {
-    allowedExtensions: string[];
-}
+import type { Ignore } from 'ignore';
 
 export function generateProjectContextText(
     projectPath: string,
     outputFile: string,
-    config: GeneratorConfig,
-    ig: Ignore // Accept the pre-configured ignore instance
+    ig: Ignore 
 ): Promise<void> {
     return new Promise((resolve, reject) => {
         try {
@@ -7558,12 +7774,6 @@ export function generateProjectContextText(
 
             outputStream.write("--- START OF FILE ProjectContext.txt ---\n\n");
             outputStream.write("--- Folder Structure ---\n");
-
-            function shouldProcessFile(fileName: string): boolean {
-                // The ignore instance already handles excluded files.
-                // We only need to check for allowed extensions.
-                return config.allowedExtensions.some((ext) => fileName.endsWith(ext));
-            }
             
             function walkDir(dir: string, indent: string = ""): void {
                 let entries;
@@ -7575,8 +7785,8 @@ export function generateProjectContextText(
             
                 for (const entry of entries) {
                     const fullPath = path.join(dir, entry.name);
-                    // Get path relative to the project root for the ignore check
-                    const relativePath = path.relative(projectPath, fullPath);
+                    // --- FIX #1: Normalize path separators to forward slashes ---
+                    const relativePath = path.relative(projectPath, fullPath).replace(/\\/g, '/');
 
                     if (ig.ignores(relativePath)) {
                         continue;
@@ -7599,7 +7809,8 @@ export function generateProjectContextText(
 
                 for (const entry of entries) {
                     const fullPath = path.join(dir, entry.name);
-                    const relativePath = path.relative(projectPath, fullPath);
+                    // --- FIX #2: Normalize path separators to forward slashes ---
+                    const relativePath = path.relative(projectPath, fullPath).replace(/\\/g, '/');
                     
                     if (ig.ignores(relativePath)) {
                         continue;
@@ -7607,8 +7818,8 @@ export function generateProjectContextText(
 
                     if (entry.isDirectory()) {
                         writeIncludedFileContents(fullPath);
-                    } else if (entry.isFile() && shouldProcessFile(entry.name)) {
-                        outputStream.write(`\n--- ${relativePath.replace(/\\/g, '/')} ---\n`);
+                    } else if (entry.isFile()) {
+                        outputStream.write(`\n--- ${relativePath} ---\n`); // No need for extra replace here now
                         try {
                             const content = fs.readFileSync(fullPath, "utf8");
                             outputStream.write(content + "\n");
@@ -7641,86 +7852,101 @@ import * as fs from 'fs';
 import { generateProjectContextText } from './contextGenerator';
 import { getAvailableTemplates, getTemplateContent, detectProjectTypes } from './gitignoreProvider';
 import ignore from 'ignore';
-import { SidebarProvider } from './SidebarProvider'; // Import the new provider
+import { SidebarProvider } from './SidebarProvider';
 
 export function activate(context: vscode.ExtensionContext) {
 
     // Register the Sidebar Panel
     const sidebarProvider = new SidebarProvider(context.extensionUri);
     context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider(
-            SidebarProvider.viewType,
-            sidebarProvider
-        )
+        vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider)
     );
 
-    // Register the command (this is still needed for the sidebar to call it)
-    const commandDisposable = vscode.commands.registerCommand('code-context-extractor.generate', async () => {
-        // All of your existing command logic goes here...
+    // COMMAND 1: Loads gitignore rules and returns them (for the UI)
+    const loadTemplateCommand = vscode.commands.registerCommand('code-context-extractor.loadTemplateRules', async () => {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
             vscode.window.showErrorMessage('No workspace folder is open.');
             return;
         }
         const projectRoot = workspaceFolders[0].uri.fsPath;
-        const outputFilePath = path.join(projectRoot, 'ProjectContext.txt');
-        
-        const configuration = vscode.workspace.getConfiguration('code-context-extractor');
-        const useGitignore = configuration.get<boolean>('useGitignoreTemplates', true);
 
-        const ig = ignore();
-
-        const excludeDirs = configuration.get<string[]>('excludeDirs', []);
-        const excludeFiles = configuration.get<string[]>('excludeFiles', []);
-        
-        ig.add(excludeDirs.map(dir => `${dir}/`));
-        ig.add(excludeFiles);
-
-        if (useGitignore) {
-            const templates = await getAvailableTemplates();
-            const detected = await detectProjectTypes(projectRoot);
-
-            if (templates.length > 0) {
-                const selectedTemplate = await vscode.window.showQuickPick(templates, {
-                    canPickMany: false,
-                    placeHolder: 'Select a .gitignore template (or press ESC to skip)',
-                    title: detected.length > 0 ? `Suggested: ${detected.join(', ')}` : 'Choose a template'
-                });
-
-                if (selectedTemplate) {
-                    const content = await getTemplateContent(selectedTemplate);
-                    ig.add(content);
-                }
-            }
+        const templates = await getAvailableTemplates();
+        if (templates.length === 0) {
+            vscode.window.showWarningMessage('Could not fetch .gitignore templates from GitHub.');
+            return [];
         }
 
-        const localGitignorePath = path.join(projectRoot, '.gitignore');
-        if (fs.existsSync(localGitignorePath)) {
-            const localGitignoreContent = fs.readFileSync(localGitignorePath, 'utf8');
-            ig.add(localGitignoreContent);
-        }
-
-        const config = {
-            allowedExtensions: configuration.get<string[]>('allowedExtensions', [])
-        };
-        
-        await vscode.window.withProgress({
-            location: vscode.ProgressLocation.Notification,
-            title: 'Generating Project Context',
-            cancellable: false
-        }, async (progress) => {
-            progress.report({ message: 'Scanning files...' });
-            try {
-                await generateProjectContextText(projectRoot, outputFilePath, config, ig);
-                vscode.window.showInformationMessage('Successfully generated ProjectContext.txt!');
-                await vscode.window.showTextDocument(vscode.Uri.file(outputFilePath));
-            } catch (error) {
-                vscode.window.showErrorMessage(`Failed to generate context: ${(error as Error).message}`);
-            }
+        const detected = await detectProjectTypes(projectRoot);
+        const selectedTemplate = await vscode.window.showQuickPick(templates, {
+            canPickMany: false,
+            placeHolder: 'Select a .gitignore template to load',
+            title: detected.length > 0 ? `Suggested: ${detected.join(', ')}` : 'Choose a template'
         });
+
+        if (selectedTemplate) {
+            const content = await getTemplateContent(selectedTemplate);
+            // Parse and filter out comments/empty lines before returning
+            return content.split(/\r?\n/).filter(line => line.trim() && !line.trim().startsWith('#'));
+        }
+        return [];
     });
 
-    context.subscriptions.push(commandDisposable);
+    // COMMAND 2: Generates the context file (now accepts rules from the UI)
+    const generateCommand = vscode.commands.registerCommand('code-context-extractor.generate', async (args?: { selectedRules?: string[] }) => {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders) {
+        vscode.window.showErrorMessage('No workspace folder is open.');
+        return;
+    }
+    const projectRoot = workspaceFolders[0].uri.fsPath;
+    const outputFilePath = path.join(projectRoot, 'ProjectContext.txt');
+    
+    const configuration = vscode.workspace.getConfiguration('code-context-extractor');
+    const ig = ignore();
+
+    // 1. Add rules from user's global settings
+    const excludeDirs = configuration.get<string[]>('excludeDirs', []);
+    const excludeFiles = configuration.get<string[]>('excludeFiles', []);
+    ig.add(excludeDirs.map(dir => `${dir}/`));
+    ig.add(excludeFiles);
+
+    // 2. Add rules selected from the UI (if any)
+    if (args?.selectedRules) {
+        ig.add(args.selectedRules);
+    }
+
+    // 3. Add rules from local .gitignore
+    const localGitignorePath = path.join(projectRoot, '.gitignore');
+    if (fs.existsSync(localGitignorePath)) {
+        const localGitignoreContent = fs.readFileSync(localGitignorePath, 'utf8');
+        ig.add(localGitignoreContent);
+    }
+
+    // --- THIS BLOCK IS REMOVED ---
+    // const config = {
+    //     allowedExtensions: configuration.get<string[]>('allowedExtensions', [])
+    // };
+    
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'Generating Project Context',
+        cancellable: false
+    }, async (progress) => {
+        progress.report({ message: 'Scanning files...' });
+        try {
+            // Pass only the ignore instance, no longer the config object
+            await generateProjectContextText(projectRoot, outputFilePath, ig);
+            vscode.window.showInformationMessage('Successfully generated ProjectContext.txt!');
+            await vscode.window.showTextDocument(vscode.Uri.file(outputFilePath));
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to generate context: ${(error as Error).message}`);
+        }
+    });
+});
+
+
+    context.subscriptions.push(loadTemplateCommand, generateCommand);
 }
 
 export function deactivate() {}
@@ -7820,57 +8046,108 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     constructor(private readonly _extensionUri: vscode.Uri) {}
 
-    public resolveWebviewView(
-        webviewView: vscode.WebviewView,
-        context: vscode.WebviewViewResolveContext,
-        _token: vscode.CancellationToken,
-    ) {
-        this._view = webviewView;
+    public async resolveWebviewView(
+    webviewView: vscode.WebviewView,
+    context: vscode.WebviewViewResolveContext,
+    _token: vscode.CancellationToken,
+) {
+    this._view = webviewView;
 
-        webviewView.webview.options = {
-            // Allow scripts in the webview
-            enableScripts: true,
-            localResourceRoots: [this._extensionUri]
-        };
+    webviewView.webview.options = {
+        enableScripts: true,
+        localResourceRoots: [this._extensionUri]
+    };
 
-        webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+    webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
-        // Handle messages from the webview
-        webviewView.webview.onDidReceiveMessage(data => {
-            switch (data.type) {
-                case 'generate': {
-                    vscode.commands.executeCommand('code-context-extractor.generate');
-                    break;
-                }
+    // Handle messages from the webview
+    webviewView.webview.onDidReceiveMessage(async (data) => {
+        switch (data.type) {
+            case 'generate': {
+                // Execute the generate command with the selected rules as an argument
+                vscode.commands.executeCommand('code-context-extractor.generate', {
+                    selectedRules: data.rules
+                });
+                break;
             }
-        });
-    }
+            case 'load-template': {
+                // Call the new command to get the rules
+                const rules = await vscode.commands.executeCommand<string[]>('code-context-extractor.loadTemplateRules');
+                if (rules && this._view) {
+                    // Send the rules back to the webview to be displayed
+                    this._view.webview.postMessage({ type: 'update-rules', rules: rules });
+                }
+                break;
+            }
+        }
+    });
+}
 
     private _getHtmlForWebview(webview: vscode.Webview) {
-        // Get the local path to main script run in the webview, then convert it to a uri we can use in the webview.
-        const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'main.js'));
-        const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'main.css'));
+    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'main.js'));
+    const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'main.css'));
+    const nonce = getNonce();
 
-        // Use a nonce to only allow specific scripts to be run
-        const nonce = getNonce();
+    return `<!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <link href="${styleUri}" rel="stylesheet">
+            <title>Code Context Extractor</title>
+        </head>
+        <body>
+            <h2>Code Context Extractor</h2>
+            <p class="description">
+                Create a single text file with your project's context, optimized for feeding into AI models.
+            </p>
 
-        return `<!DOCTYPE html>
-			<html lang="en">
-			<head>
-				<meta charset="UTF-8">
-                <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
-				<meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <link href="${styleUri}" rel="stylesheet">
-				<title>Code Context</title>
-			</head>
-			<body>
-                <h3>Code Context Generator</h3>
-                <p>Click the button to generate the ProjectContext.txt file for your current workspace.</p>
-				<button id="generate-btn">Generate</button>
-                <script nonce="${nonce}" src="${scriptUri}"></script>
-			</body>
-			</html>`;
-    }
+            <hr>
+
+            <h3>Step 1: Choose a Base Filter</h3>
+            <p class="description">
+                Start by loading a standard .gitignore template based on your project's technology. This will provide a good starting list of files and folders to exclude.
+            </p>
+            <button id="load-template-btn">Load Project Type Template</button>
+
+            <!-- This entire section is hidden until a template is loaded -->
+            <div id="refine-section" class="hidden">
+                <hr>
+                <h3>Step 2: Refine Files to Exclude</h3>
+                <p class="description">
+                    Uncheck any items you want to include in the context file. Add any other files or folders you wish to exclude.
+                </p>
+
+                <div id="select-all-container">
+                    <input type="checkbox" id="select-all-cb">
+                    <label for="select-all-cb">Select / Deselect All</label>
+                </div>
+                
+                <div id="rules-container">
+                    <!-- Checkboxes will be dynamically inserted here -->
+                </div>
+
+                <div id="add-rule-container">
+                    <input type="text" id="new-rule-input" placeholder="Add custom rule (e.g., *.log or temp/)"/>
+                    <button id="add-rule-btn">+</button>
+                </div>
+            </div>
+
+            <!-- This section is also hidden until a template is loaded -->
+            <div id="generate-section" class="hidden">
+                <hr>
+                <h3>Step 3: Generate the File</h3>
+                <p class="description">
+                    This will create a 'ProjectContext.txt' file in your workspace root.
+                </p>
+                <button id="generate-btn">Generate Context File</button>
+            </div>
+
+            <script nonce="${nonce}" src="${scriptUri}"></script>
+        </body>
+        </html>`;
+}
 }
 
 function getNonce() {
@@ -8123,13 +8400,14 @@ generateProjectContextText(projectPath, "ProjectContext.txt"); // Changed output
     "Other"
   ],
   "activationEvents": [
-    "onCommand:code-context-extractor.generate"
+    "onCommand:code-context-extractor.generate",
+    "onView:code-context-extractor-view" 
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "code-context-extractor.generate",
+        "command": "code-context-extractor.loadTemplateRules",
         "title": "Generate Project Context File"
       }
     ],
@@ -8166,47 +8444,29 @@ generateProjectContextText(projectPath, "ProjectContext.txt"); // Changed output
             "package-lock.json"
           ],
           "description": "List of specific file names to exclude from the context file."
-        },
-        "code-context-extractor.allowedExtensions": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": [
-            ".js",
-            ".tsx",
-            ".ts",
-            ".jsx",
-            ".css",
-            ".html",
-            ".local",
-            ".json",
-            ".sql",
-            ".mjs",
-            ".md"
-          ],
-          "description": "List of file extensions to include in the context file."
         }
+        
       }
-    }
-  },
-  "viewsContainers": {
-    "activitybar": [
-      {
-        "id": "code-context-extractor-sidebar",
-        "title": "Code Context Extractor",
-        "icon": "media/icon.svg"
-      }
-    ]
-  },
-  "views": {
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "code-context-extractor-sidebar",
+          "title": "Code Context Extractor",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
     "code-context-extractor-sidebar": [
       {
         "id": "code-context-extractor-view",
         "name": "Generator",
-        "type": "webview"
+        "type": "webview",
+        "icon": "media/icon.svg"
       }
     ]
+  }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
@@ -8241,7 +8501,6 @@ generateProjectContextText(projectPath, "ProjectContext.txt"); // Changed output
     "node-fetch": "^2.7.0"
   }
 }
-
 
 --- README.md ---
 # code-context-extractor README
@@ -8316,125 +8575,6 @@ You can author your README using Visual Studio Code. Here are some useful editor
 
 **Enjoy!**
 
-
---- tempCodeRunnerFile.js ---
-const fs = require("fs");
-const path = require("path");
-
-function generateProjectContextText( // Renamed for clarity, was generateGoFileContentText
-  projectPath,
-  outputFile = "Code Context.txt"
-) {
-  const excludeDirs = ["vendor", ".git", "node_modules", ".next", ".vscode"];
-  // Define allowed extensions and specific files to exclude
-  const allowedExtensions = [
-    ".js", "tsx", "ts", ".jsx", ".css", ".html", ".local", ".json", ".sql", ".mjs", ".md",  // Added .json
-  ];
-  const excludedFiles = ["package-lock.json"]; // Specific files to always exclude
-
-  const outputStream = fs.createWriteStream(outputFile, { encoding: "utf8" });
-
-  outputStream.write("--- Folder Structure ---\n");
-
-  // Helper function to determine if a file should be processed
-  function shouldProcessFile(fileName) {
-    if (excludedFiles.includes(fileName)) {
-      return false;
-    }
-    return allowedExtensions.some((ext) => fileName.endsWith(ext));
-  }
-
-  function walkDir(dir, relativePath = ".") {
-    let files;
-    try {
-      files = fs.readdirSync(dir, { withFileTypes: true });
-    } catch (err) {
-      // Handle cases where we might not have permission to read a directory
-      outputStream.write(`Error reading directory ${dir}: ${err.message}\n`);
-      return;
-    }
-
-
-    const displayPath = relativePath === "." ? "." : `${relativePath}/`;
-    outputStream.write(displayPath + "\n");
-
-    // Sort files and directories for consistent output (optional but nice)
-    files.sort((a, b) => {
-      if (a.isDirectory() && !b.isDirectory()) return -1;
-      if (!a.isDirectory() && b.isDirectory()) return 1;
-      return a.name.localeCompare(b.name);
-    });
-
-    for (const file of files) {
-      const fullPath = path.join(dir, file.name);
-      const subPath = path.join(relativePath, file.name);
-
-      if (file.isDirectory()) {
-        // Check if any part of the path matches an excluded directory name
-        // This is more robust than fullPath.includes(exclude) for nested excludes
-        const pathSegments = subPath.split(path.sep);
-        if (excludeDirs.some((exclude) => pathSegments.includes(exclude))) {
-          continue;
-        }
-        walkDir(fullPath, subPath);
-      } else if (file.isFile() && shouldProcessFile(file.name)) {
-        outputStream.write(`  ${file.name}\n`);
-      }
-    }
-  }
-
-  function writeIncludedFileContents(dir, relativePath = ".") { // Added relativePath for better excludeDirs check
-    let files;
-     try {
-      files = fs.readdirSync(dir, { withFileTypes: true });
-    } catch (err) {
-      outputStream.write(`Error reading directory ${dir} for content: ${err.message}\n`);
-      return;
-    }
-
-    // Sort for consistency
-    files.sort((a, b) => {
-      if (a.isDirectory() && !b.isDirectory()) return -1;
-      if (!a.isDirectory() && b.isDirectory()) return 1;
-      return a.name.localeCompare(b.name);
-    });
-
-
-    for (const file of files) {
-      const fullPath = path.join(dir, file.name);
-      const currentSubPath = path.join(relativePath, file.name); // Track subpath for exclusion
-
-      if (file.isDirectory()) {
-        const pathSegments = currentSubPath.split(path.sep);
-        if (excludeDirs.some((exclude) => pathSegments.includes(exclude))) {
-          continue;
-        }
-        writeIncludedFileContents(fullPath, currentSubPath); // Pass subPath
-      } else if (file.isFile() && shouldProcessFile(file.name)) {
-        outputStream.write(`--- ${path.join(relativePath, file.name)} ---\n`); // Use relative path for file header
-        try {
-          const content = fs.readFileSync(fullPath, "utf8");
-          outputStream.write(content + "\n\n");
-        } catch (err) {
-          outputStream.write(`Error reading file ${fullPath}: ${err.message}\n\n`);
-        }
-      }
-    }
-  }
-
-  walkDir(projectPath);
-  outputStream.write("\n");
-  writeIncludedFileContents(projectPath); // Start with "." as relativePath
-  outputStream.end(() => {
-    console.log(`Project context generated in '${outputFile}'`);
-  });
-}
-
-// Replace with your actual project path if needed
-// For testing, ensure you have some .json files and a package-lock.json
-// in the directory or subdirectories.
-const projectPath = "./";
-generateProjectContextText(projectPath, "ProjectContext.txt"); // Changed output file name
 
 --- tsconfig.json ---
 {

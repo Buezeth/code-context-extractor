@@ -17,8 +17,8 @@
   "contributes": {
     "commands": [
       {
-        "command": "code-context-extractor.loadTemplateRules",
-        "title": "Generate Project Context File"
+        "command": "code-context-extractor.generate",
+        "title": "Code Context: Generate Project Context File"
       }
     ],
     "configuration": {
@@ -54,27 +54,8 @@
             "package-lock.json"
           ],
           "description": "List of specific file names to exclude from the context file."
-        },
-        "code-context-extractor.allowedExtensions": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": [
-            ".js",
-            ".tsx",
-            ".ts",
-            ".jsx",
-            ".css",
-            ".html",
-            ".local",
-            ".json",
-            ".sql",
-            ".mjs",
-            ".md"
-          ],
-          "description": "List of file extensions to include in the context file."
         }
+        
       }
     },
     "viewsContainers": {
