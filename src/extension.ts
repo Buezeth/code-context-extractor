@@ -10,8 +10,8 @@ import { SidebarProvider } from './SidebarProvider';
 
 export function activate(context: vscode.ExtensionContext) {
 
-    // Register the Sidebar Panel
-    const sidebarProvider = new SidebarProvider(context.extensionUri);
+    // Register the Sidebar Panel, passing in the workspace state
+    const sidebarProvider = new SidebarProvider(context.extensionUri, context.workspaceState);
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider)
     );
@@ -86,7 +86,6 @@ export function activate(context: vscode.ExtensionContext) {
         
         const ig = ignore();
 
-        // --- CORE FIX ---
         // Always ignore the output file itself and the .git directory.
         ig.add('ProjectContext.txt');
         ig.add('.git/');

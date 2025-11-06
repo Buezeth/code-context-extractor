@@ -7,7 +7,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     private _view?: vscode.WebviewView;
 
-    constructor(private readonly _extensionUri: vscode.Uri) {}
+    constructor(
+        private readonly _extensionUri: vscode.Uri,
+        private readonly _workspaceState: vscode.Memento // Add Memento to constructor
+    ) {}
 
     public async resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -23,28 +26,39 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
+    // On initial load, send any saved state to the webview
+    webviewView.onDidChangeVisibility(() => {
+        const savedState = this._workspaceState.get('sidebarState');
+        if (savedState) {
+            webviewView.webview.postMessage({ type: 'restore-state', state: savedState });
+        }
+    });
+
     // Handle messages from the webview
     webviewView.webview.onDidReceiveMessage(async (data) => {
         switch (data.type) {
             case 'generate': {
-                // Execute the generate command with the selected rules as an argument
                 vscode.commands.executeCommand('code-context-extractor.generate', {
                     selectedRules: data.rules
                 });
                 break;
             }
             case 'load-template': {
-                // Call the new command to get the rules
                 const rules = await vscode.commands.executeCommand<string[]>('code-context-extractor.loadTemplateRules');
                 if (rules && this._view) {
-                    // Send the rules back to the webview to be displayed
                     this._view.webview.postMessage({ type: 'update-rules', rules: rules });
                 }
+                break;
+            }
+            // NEW: Listen for state changes from the UI and save them
+            case 'save-state': {
+                await this._workspaceState.update('sidebarState', data.state);
                 break;
             }
         }
     });
 }
+
 
     private _getHtmlForWebview(webview: vscode.Webview) {
     const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'main.js'));

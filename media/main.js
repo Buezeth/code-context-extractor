@@ -16,22 +16,64 @@
     const addRuleBtn = document.getElementById('add-rule-btn');
     const generateBtn = document.getElementById('generate-btn');
 
+    // --- State Management ---
+
+    // NEW: Function to get the current state of the UI
+    function getCurrentState() {
+        const rules = [];
+        const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]');
+        checkboxes.forEach(cb => {
+            rules.push({
+                value: cb.value,
+                checked: cb.checked
+            });
+        });
+        return {
+            rules: rules,
+            isVisible: !refineSection.classList.contains('hidden')
+        };
+    }
+
+    // NEW: Function to send the current state to the extension to be saved
+    function saveState() {
+        vscode.postMessage({
+            type: 'save-state',
+            state: getCurrentState()
+        });
+    }
+
     // --- Handle messages FROM the extension ---
     window.addEventListener('message', event => {
         const message = event.data;
-        if (message.type === 'update-rules') {
-            const rules = message.rules;
-            populateRulesList(rules);
-
-            // If rules were loaded, show the next steps
-            if (rules && rules.length > 0) {
-                refineSection.classList.remove('hidden');
-                generateSection.classList.remove('hidden');
-            } else {
-                // If no rules (e.g., user cancelled), hide the sections
-                refineSection.classList.add('hidden');
-                generateSection.classList.add('hidden');
-            }
+        switch (message.type) {
+            case 'update-rules':
+                // This is triggered by "Load/Refresh" button
+                const rules = message.rules.map(rule => ({ value: rule, checked: true }));
+                populateRulesList(rules);
+                if (rules.length > 0) {
+                    refineSection.classList.remove('hidden');
+                    generateSection.classList.remove('hidden');
+                } else {
+                    refineSection.classList.add('hidden');
+                    generateSection.classList.add('hidden');
+                }
+                saveState(); // Save state after loading new rules
+                break;
+            
+            case 'restore-state':
+                // This is triggered when the webview becomes visible
+                const state = message.state;
+                if (state && state.rules) {
+                    populateRulesList(state.rules);
+                }
+                if (state && state.isVisible) {
+                    refineSection.classList.remove('hidden');
+                    generateSection.classList.remove('hidden');
+                } else {
+                    refineSection.classList.add('hidden');
+                    generateSection.classList.add('hidden');
+                }
+                break;
         }
     });
 
@@ -51,26 +93,26 @@
         vscode.postMessage({ type: 'generate', rules: selectedRules });
     });
 
-    // --- NEW: Add rule handler function ---
     function addNewRule() {
         let newRule = newRuleInput.value.trim();
         if (newRule) {
-            // --- FIX: Automatically prepend '*' to extension-like patterns ---
-            // If it starts with a dot and has no wildcards or slashes, it's likely an extension.
             if (newRule.startsWith('.') && !newRule.includes('*') && !newRule.includes('/')) {
                 newRule = '*' + newRule;
             }
-
-            const ruleItem = createRuleItem(newRule, true);
-            rulesContainer.appendChild(ruleItem);
-            newRuleInput.value = '';
-            updateSelectAllState();
+            // Check if rule already exists to avoid duplicates
+            if (!document.getElementById(newRule)) {
+                const ruleItem = createRuleItem(newRule, true);
+                rulesContainer.appendChild(ruleItem);
+                newRuleInput.value = '';
+                updateSelectAllState();
+                saveState(); // Save state after adding a rule
+            } else {
+                newRuleInput.value = ''; // Clear input even if duplicate
+            }
         }
     }
 
     addRuleBtn.addEventListener('click', addNewRule);
-
-    // --- NEW: Allow pressing Enter to add rule ---
     newRuleInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') {
             addNewRule();
@@ -82,26 +124,28 @@
         const isChecked = e.target.checked;
         const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]');
         checkboxes.forEach(cb => cb.checked = isChecked);
+        saveState(); // Save state after toggling all
     });
 
     rulesContainer.addEventListener('change', (e) => {
         if (e.target.matches('input[type="checkbox"]')) {
             updateSelectAllState();
+            saveState(); // Save state on individual checkbox change
         }
     });
 
     // --- Helper Functions ---
-    function createRuleItem(rule, isChecked) {
+    function createRuleItem(ruleValue, isChecked) {
         const ruleItem = document.createElement('div');
         ruleItem.className = 'rule-item';
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
-        checkbox.id = rule;
-        checkbox.value = rule;
+        checkbox.id = ruleValue;
+        checkbox.value = ruleValue;
         checkbox.checked = isChecked;
         const label = document.createElement('label');
-        label.htmlFor = rule;
-        label.textContent = rule;
+        label.htmlFor = ruleValue;
+        label.textContent = ruleValue;
         ruleItem.appendChild(checkbox);
         ruleItem.appendChild(label);
         return ruleItem;
@@ -114,10 +158,11 @@
             return;
         }
         rules.forEach(rule => {
-            const ruleItem = createRuleItem(rule, true);
+            // rule is now an object { value, checked }
+            const ruleItem = createRuleItem(rule.value, rule.checked);
             rulesContainer.appendChild(ruleItem);
         });
-        selectAllCb.checked = true;
+        updateSelectAllState();
     }
 
     function updateSelectAllState() {
