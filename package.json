@@ -35,13 +35,8 @@
             "type": "string"
           },
           "default": [
-            "vendor",
             ".git",
-            "node_modules",
-            ".next",
             ".vscode",
-            "dist",
-            "out"
           ],
           "description": "List of directory names to exclude from the context file."
         },

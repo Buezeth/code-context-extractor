@@ -5,12 +5,8 @@
     // --- Get references to all our UI elements ---
     const loadTemplateBtn = document.getElementById('load-template-btn');
     const rulesContainer = document.getElementById('rules-container');
-    
-    // Section containers
     const refineSection = document.getElementById('refine-section');
     const generateSection = document.getElementById('generate-section');
-
-    // Interactive elements within the sections
     const selectAllCb = document.getElementById('select-all-cb');
     const newRuleInput = document.getElementById('new-rule-input');
     const addRuleBtn = document.getElementById('add-rule-btn');
@@ -18,18 +14,32 @@
 
     // --- State Management ---
     function getCurrentState() {
-        const rules = [];
-        const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]');
-        checkboxes.forEach(cb => {
-            rules.push({
-                value: cb.value,
-                checked: cb.checked
-            });
-        });
-        return {
-            rules: rules,
+        const state = {
+            local: [],
+            template: { name: '', rules: [] },
+            custom: [],
             isVisible: !refineSection.classList.contains('hidden')
         };
+
+        // Scrape rules from each category
+        document.querySelectorAll('#local-rules-list .rule-item').forEach(item => {
+            const checkbox = item.querySelector('input');
+            state.local.push({ value: checkbox.value, checked: checkbox.checked });
+        });
+        const templateHeader = document.getElementById('template-rules-header');
+        if (templateHeader) {
+            state.template.name = templateHeader.dataset.templateName;
+        }
+        document.querySelectorAll('#template-rules-list .rule-item').forEach(item => {
+            const checkbox = item.querySelector('input');
+            state.template.rules.push({ value: checkbox.value, checked: checkbox.checked });
+        });
+        document.querySelectorAll('#custom-rules-list .rule-item').forEach(item => {
+            const checkbox = item.querySelector('input');
+            state.custom.push({ value: checkbox.value, checked: checkbox.checked });
+        });
+
+        return state;
     }
 
     function saveState() {
@@ -44,44 +54,47 @@
         const message = event.data;
         switch (message.type) {
             case 'update-rules': {
-                const rules = message.rules.map(rule => ({ value: rule, checked: true }));
-                populateRulesList(rules);
-
-                if (rules.length > 0) {
+                const { local, template } = message.rules;
+                const state = {
+                    local: local.map(r => ({ value: r, checked: true })),
+                    template: {
+                        name: template.name,
+                        rules: template.rules.map(r => ({ value: r, checked: true }))
+                    },
+                    custom: [] // Start with no custom rules on a fresh load
+                };
+                populateRulesList(state);
+                if (state.local.length > 0 || state.template.rules.length > 0) {
                     refineSection.classList.remove('hidden');
                     generateSection.classList.remove('hidden');
                 } else {
                     refineSection.classList.add('hidden');
                     generateSection.classList.add('hidden');
                 }
-                
-                // --- Re-enable the button and restore its text ---
                 loadTemplateBtn.disabled = false;
                 loadTemplateBtn.textContent = 'Load / Refresh Ignore Rules';
-
                 saveState();
                 break;
             }
             case 'restore-state': {
                 const state = message.state;
-                if (state && state.rules) {
-                    populateRulesList(state.rules);
-                }
-                if (state && state.isVisible) {
-                    refineSection.classList.remove('hidden');
-                    generateSection.classList.remove('hidden');
-                } else {
-                    refineSection.classList.add('hidden');
-                    generateSection.classList.add('hidden');
+                if (state) {
+                    populateRulesList(state);
+                    if (state.isVisible) {
+                        refineSection.classList.remove('hidden');
+                        generateSection.classList.remove('hidden');
+                    } else {
+                        refineSection.classList.add('hidden');
+                        generateSection.classList.add('hidden');
+                    }
                 }
                 break;
             }
         }
     });
 
-    // --- Event Listeners for buttons ---
+    // --- Event Listeners ---
     loadTemplateBtn.addEventListener('click', () => {
-        // --- Disable the button and show loading text ---
         loadTemplateBtn.disabled = true;
         loadTemplateBtn.textContent = 'Loading templates...';
         vscode.postMessage({ type: 'load-template' });
@@ -89,12 +102,8 @@
 
     generateBtn.addEventListener('click', () => {
         const selectedRules = [];
-        const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]');
-        checkboxes.forEach(cb => {
-            if (cb.checked) {
-                selectedRules.push(cb.value);
-            }
-        });
+        const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]:checked');
+        checkboxes.forEach(cb => selectedRules.push(cb.value));
         vscode.postMessage({ type: 'generate', rules: selectedRules });
     });
 
@@ -106,7 +115,18 @@
             }
             if (!document.getElementById(newRule)) {
                 const ruleItem = createRuleItem(newRule, true);
-                rulesContainer.appendChild(ruleItem);
+                // Ensure the custom list container exists
+                let customList = document.getElementById('custom-rules-list');
+                if (!customList) {
+                    const header = document.createElement('h4');
+                    header.className = 'rules-category-header';
+                    header.textContent = 'Custom Rules';
+                    rulesContainer.appendChild(header);
+                    customList = document.createElement('div');
+                    customList.id = 'custom-rules-list';
+                    rulesContainer.appendChild(customList);
+                }
+                customList.appendChild(ruleItem);
                 newRuleInput.value = '';
                 updateSelectAllState();
                 saveState();
@@ -123,11 +143,9 @@
         }
     });
 
-    // --- Event Listeners for checkboxes ---
     selectAllCb.addEventListener('change', (e) => {
         const isChecked = e.target.checked;
-        const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]');
-        checkboxes.forEach(cb => cb.checked = isChecked);
+        rulesContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = isChecked);
         saveState();
     });
 
@@ -155,16 +173,56 @@
         return ruleItem;
     }
 
-    function populateRulesList(rules) {
+    function populateRulesList(state) {
         rulesContainer.innerHTML = '';
-        if (!rules || rules.length === 0) {
+        let hasContent = false;
+
+        // Render local rules
+        if (state.local && state.local.length > 0) {
+            hasContent = true;
+            const header = document.createElement('h4');
+            header.className = 'rules-category-header';
+            header.textContent = 'From .gitignore & Settings';
+            const listDiv = document.createElement('div');
+            listDiv.id = 'local-rules-list';
+            state.local.forEach(rule => listDiv.appendChild(createRuleItem(rule.value, rule.checked)));
+            rulesContainer.appendChild(header);
+            rulesContainer.appendChild(listDiv);
+        }
+        
+        // Render template rules
+        if (state.template && state.template.rules.length > 0) {
+            hasContent = true;
+            const header = document.createElement('h4');
+            header.className = 'rules-category-header';
+            header.id = 'template-rules-header';
+            header.textContent = `From Template (${state.template.name})`;
+            header.dataset.templateName = state.template.name; // Store name for state saving
+            const listDiv = document.createElement('div');
+            listDiv.id = 'template-rules-list';
+            state.template.rules.forEach(rule => listDiv.appendChild(createRuleItem(rule.value, rule.checked)));
+            rulesContainer.appendChild(header);
+            rulesContainer.appendChild(listDiv);
+        }
+
+        // Render custom rules
+        if (state.custom && state.custom.length > 0) {
+            hasContent = true;
+            const header = document.createElement('h4');
+            header.className = 'rules-category-header';
+            header.textContent = 'Custom Rules';
+            const listDiv = document.createElement('div');
+            listDiv.id = 'custom-rules-list';
+            state.custom.forEach(rule => listDiv.appendChild(createRuleItem(rule.value, rule.checked)));
+            rulesContainer.appendChild(header);
+            rulesContainer.appendChild(listDiv);
+        }
+        
+        if (!hasContent) {
             selectAllCb.checked = false;
             return;
         }
-        rules.forEach(rule => {
-            const ruleItem = createRuleItem(rule.value, rule.checked);
-            rulesContainer.appendChild(ruleItem);
-        });
+
         updateSelectAllState();
     }
 

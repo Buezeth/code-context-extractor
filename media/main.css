@@ -93,3 +93,27 @@ button:disabled {
     color: var(--vscode-disabledForeground);
     opacity: 0.7;
 }
+
+.description {
+    font-size: var(--vscode-font-size);
+    color: var(--vscode-description-foreground);
+    margin-top: 0;
+    margin-bottom: 5px;
+}
+
+button:disabled {
+    cursor: not-allowed;
+    background-color: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-disabledForeground);
+    opacity: 0.7;
+}
+
+/* --- ADD THIS NEW STYLE FOR CATEGORY HEADERS --- */
+.rules-category-header {
+    font-weight: bold;
+    margin-top: 15px;
+    margin-bottom: 5px;
+    color: var(--vscode-foreground);
+    border-bottom: 1px solid var(--vscode-editor-widget-border);
+    padding-bottom: 3px;
+}

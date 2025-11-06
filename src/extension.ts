@@ -10,64 +10,54 @@ import { SidebarProvider } from './SidebarProvider';
 
 export function activate(context: vscode.ExtensionContext) {
 
-    // Register the Sidebar Panel, passing in the workspace state
     const sidebarProvider = new SidebarProvider(context.extensionUri, context.workspaceState);
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider)
     );
 
-    // COMMAND 1: Loads and aggregates ignore rules from all sources.
     const loadTemplateCommand = vscode.commands.registerCommand('code-context-extractor.loadTemplateRules', async () => {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
             vscode.window.showErrorMessage('No workspace folder is open.');
-            return [];
+            return {};
         }
         const projectRoot = workspaceFolders[0].uri.fsPath;
 
-        // Use a Set to store unique rules
-        const allRules = new Set<string>();
+        const localRules = new Set<string>();
+        const templateRules = new Set<string>();
+        let templateName = '';
 
-        // Helper to process and add rules from content string
-        const addRulesFromString = (content: string) => {
+        const addRulesToSet = (content: string, ruleSet: Set<string>) => {
             content.split(/\r?\n/).forEach(line => {
                 const trimmed = line.trim();
                 if (trimmed && !trimmed.startsWith('#')) {
-                    allRules.add(trimmed);
+                    ruleSet.add(trimmed);
                 }
             });
         };
 
-        // 1. Add rules from local .gitignore if it exists
+        // 1. Add rules from local .gitignore and settings
         const localGitignorePath = path.join(projectRoot, '.gitignore');
         if (fs.existsSync(localGitignorePath)) {
             const localGitignoreContent = fs.readFileSync(localGitignorePath, 'utf8');
-            addRulesFromString(localGitignoreContent);
+            addRulesToSet(localGitignoreContent, localRules);
         }
-
-        // 2. Add rules from user's global settings
         const configuration = vscode.workspace.getConfiguration('code-context-extractor');
         const excludeDirs = configuration.get<string[]>('excludeDirs', []);
         const excludeFiles = configuration.get<string[]>('excludeFiles', []);
-        excludeDirs.map(dir => `${dir}/`).forEach(rule => allRules.add(rule));
-        excludeFiles.forEach(rule => allRules.add(rule));
+        excludeDirs.map(dir => `${dir}/`).forEach(rule => localRules.add(rule));
+        excludeFiles.forEach(rule => localRules.add(rule));
 
-        // 3. Ask user to select a template to add MORE rules
+        // 2. Ask user to select a template to add MORE rules
         const templates = await getAvailableTemplates();
-        if (templates.length === 0) {
-            vscode.window.showWarningMessage('Could not fetch .gitignore templates from GitHub. Using local rules only.');
-        } else {
+        if (templates.length > 0) {
             const detected = await detectProjectTypes(projectRoot);
-
-            // --- NEW LOGIC TO REORDER TEMPLATES ---
             const detectedSet = new Set(detected.map(d => d.toLowerCase()));
             const suggestedTemplates: vscode.QuickPickItem[] = [];
             const otherTemplates: vscode.QuickPickItem[] = [];
 
-            // Sort all templates alphabetically first
             templates.sort((a, b) => a.localeCompare(b));
 
-            // Partition the list into "suggested" and "others"
             templates.forEach(template => {
                 if (detectedSet.has(template.toLowerCase())) {
                     suggestedTemplates.push({
@@ -79,28 +69,31 @@ export function activate(context: vscode.ExtensionContext) {
                 }
             });
 
-            // Combine them, with suggestions at the top
             const allItems = [...suggestedTemplates, ...otherTemplates];
-            // --- END OF NEW LOGIC ---
-
-            const selectedTemplate = await vscode.window.showQuickPick(allItems, {
+            const selectedTemplateItem = await vscode.window.showQuickPick(allItems, {
                 canPickMany: false,
                 placeHolder: 'Select a template to add its rules (optional)',
-                title: 'Choose a .gitignore Template' // Title is simpler now
+                title: 'Choose a .gitignore Template'
             });
 
-            if (selectedTemplate) {
-                // We get a QuickPickItem back, so we need its label
-                const content = await getTemplateContent(selectedTemplate.label);
-                addRulesFromString(content);
+            if (selectedTemplateItem) {
+                templateName = selectedTemplateItem.label;
+                const content = await getTemplateContent(templateName);
+                addRulesToSet(content, templateRules);
             }
         }
         
-        // Return a sorted array of unique rules
-        return Array.from(allRules).sort();
+        // Return a structured object with categorized rules
+        return {
+            local: Array.from(localRules).sort(),
+            template: {
+                name: templateName,
+                rules: Array.from(templateRules).sort()
+            }
+        };
     });
 
-    // COMMAND 2: Generates the context file using ONLY the rules from the UI.
+    // COMMAND 2: Generates the context file (no changes needed here)
     const generateCommand = vscode.commands.registerCommand('code-context-extractor.generate', async (args?: { selectedRules?: string[] }) => {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
@@ -112,22 +105,19 @@ export function activate(context: vscode.ExtensionContext) {
         
         const ig = ignore();
 
-        // Always ignore the output file itself and the .git directory.
         ig.add('ProjectContext.txt');
         ig.add('.git/');
 
-        // The UI is now the single source of truth for all other ignore rules.
         if (args?.selectedRules && args.selectedRules.length > 0) {
             ig.add(args.selectedRules);
         } else {
-            // Warn the user if no rules are provided, as this might include everything.
             const decision = await vscode.window.showWarningMessage(
                 "No files/folders are selected for exclusion. This will include everything in your project (including node_modules, .git, etc). Do you want to continue?",
                 { modal: true },
                 'Yes, Continue'
             );
             if (decision !== 'Yes, Continue') {
-                return; // Abort generation if user cancels
+                return; 
             }
         }
         
