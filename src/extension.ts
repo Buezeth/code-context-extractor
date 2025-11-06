@@ -86,7 +86,12 @@ export function activate(context: vscode.ExtensionContext) {
         
         const ig = ignore();
 
-        // The UI is now the single source of truth for ignore rules.
+        // --- CORE FIX ---
+        // Always ignore the output file itself and the .git directory.
+        ig.add('ProjectContext.txt');
+        ig.add('.git/');
+
+        // The UI is now the single source of truth for all other ignore rules.
         if (args?.selectedRules && args.selectedRules.length > 0) {
             ig.add(args.selectedRules);
         } else {

@@ -51,13 +51,29 @@
         vscode.postMessage({ type: 'generate', rules: selectedRules });
     });
 
-    addRuleBtn.addEventListener('click', () => {
-        const newRule = newRuleInput.value.trim();
+    // --- NEW: Add rule handler function ---
+    function addNewRule() {
+        let newRule = newRuleInput.value.trim();
         if (newRule) {
+            // --- FIX: Automatically prepend '*' to extension-like patterns ---
+            // If it starts with a dot and has no wildcards or slashes, it's likely an extension.
+            if (newRule.startsWith('.') && !newRule.includes('*') && !newRule.includes('/')) {
+                newRule = '*' + newRule;
+            }
+
             const ruleItem = createRuleItem(newRule, true);
             rulesContainer.appendChild(ruleItem);
             newRuleInput.value = '';
             updateSelectAllState();
+        }
+    }
+
+    addRuleBtn.addEventListener('click', addNewRule);
+
+    // --- NEW: Allow pressing Enter to add rule ---
+    newRuleInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            addNewRule();
         }
     });
 
