@@ -2,8 +2,12 @@
 (function () {
     const vscode = acquireVsCodeApi();
 
+    // --- Tell the extension that the webview is ready to receive state ---
+    vscode.postMessage({ type: 'webview-ready' });
+
     // --- Get references to all our UI elements ---
     const loadTemplateBtn = document.getElementById('load-template-btn');
+    // --- Get references to all our UI elements ---
     const rulesContainer = document.getElementById('rules-container');
     
     // Section containers
@@ -15,21 +19,34 @@
     const newRuleInput = document.getElementById('new-rule-input');
     const addRuleBtn = document.getElementById('add-rule-btn');
     const generateBtn = document.getElementById('generate-btn');
-
     // --- State Management ---
     function getCurrentState() {
-        const rules = [];
-        const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]');
-        checkboxes.forEach(cb => {
-            rules.push({
-                value: cb.value,
-                checked: cb.checked
-            });
-        });
-        return {
-            rules: rules,
+        const state = {
+            local: [],
+            template: { name: '', rules: [] },
+            custom: [],
             isVisible: !refineSection.classList.contains('hidden')
         };
+
+        // Scrape rules from each category
+        document.querySelectorAll('#local-rules-list .rule-item').forEach(item => {
+            const checkbox = item.querySelector('input');
+            state.local.push({ value: checkbox.value, checked: checkbox.checked });
+        });
+        const templateHeader = document.getElementById('template-rules-header');
+        if (templateHeader) {
+            state.template.name = templateHeader.dataset.templateName;
+        }
+        document.querySelectorAll('#template-rules-list .rule-item').forEach(item => {
+            const checkbox = item.querySelector('input');
+            state.template.rules.push({ value: checkbox.value, checked: checkbox.checked });
+        });
+        document.querySelectorAll('#custom-rules-list .rule-item').forEach(item => {
+            const checkbox = item.querySelector('input');
+            state.custom.push({ value: checkbox.value, checked: checkbox.checked });
+        });
+
+        return state;
     }
 
     function saveState() {
@@ -103,11 +120,8 @@
             if (newRule.startsWith('.') && !newRule.includes('*') && !newRule.includes('/')) {
                 newRule = '*' + newRule;
             }
-            
-            // --- FIX: Check if an element with this ID already exists ---
             if (!document.getElementById(newRule)) {
                 const ruleItem = createRuleItem(newRule, true);
-                // Ensure the custom list container exists
                 let customList = document.getElementById('custom-rules-list');
                 if (!customList) {
                     const header = document.createElement('h4');
@@ -119,12 +133,12 @@
                     rulesContainer.appendChild(customList);
                 }
                 customList.appendChild(ruleItem);
-                
+                newRuleInput.value = '';
                 updateSelectAllState();
-                saveState(); // Save state after adding a rule
+                saveState();
+            } else {
+                newRuleInput.value = '';
             }
-            // Clear the input field whether the rule was added or not
-            newRuleInput.value = '';
         }
     }
 
@@ -154,7 +168,7 @@
         ruleItem.className = 'rule-item';
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
-        checkbox.id = ruleValue; // Use the rule itself as the ID for easy lookup
+        checkbox.id = ruleValue;
         checkbox.value = ruleValue;
         checkbox.checked = isChecked;
         const label = document.createElement('label');
@@ -169,7 +183,6 @@
         rulesContainer.innerHTML = '';
         let hasContent = false;
 
-        // Render local rules
         if (state.local && state.local.length > 0) {
             hasContent = true;
             const header = document.createElement('h4');
@@ -182,7 +195,6 @@
             rulesContainer.appendChild(listDiv);
         }
         
-        // Render template rules
         if (state.template && state.template.rules.length > 0) {
             hasContent = true;
             const header = document.createElement('h4');
@@ -197,7 +209,6 @@
             rulesContainer.appendChild(listDiv);
         }
 
-        // Render custom rules
         if (state.custom && state.custom.length > 0) {
             hasContent = true;
             const header = document.createElement('h4');
