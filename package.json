@@ -36,7 +36,7 @@
           },
           "default": [
             ".git",
-            ".vscode",
+            ".vscode"
           ],
           "description": "List of directory names to exclude from the context file."
         },

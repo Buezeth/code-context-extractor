@@ -83,12 +83,21 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }
         
+        // --- CORE FIX: De-duplicate rules, giving priority to localRules ---
+        const finalTemplateRules = new Set<string>();
+        templateRules.forEach(rule => {
+            if (!localRules.has(rule)) {
+                finalTemplateRules.add(rule);
+            }
+        });
+        // --- END FIX ---
+
         // Return a structured object with categorized rules
         return {
             local: Array.from(localRules).sort(),
             template: {
                 name: templateName,
-                rules: Array.from(templateRules).sort()
+                rules: Array.from(finalTemplateRules).sort() // Use the de-duplicated set
             }
         };
     });

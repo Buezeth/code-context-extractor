@@ -26,16 +26,22 @@ export function generateProjectContextText(
             
                 for (const entry of entries) {
                     const fullPath = path.join(dir, entry.name);
-                    // --- FIX #1: Normalize path separators to forward slashes ---
                     const relativePath = path.relative(projectPath, fullPath).replace(/\\/g, '/');
 
-                    if (ig.ignores(relativePath)) {
-                        continue;
-                    }
-            
+                    // --- CORE FIX: Check directories with a trailing slash ---
                     if (entry.isDirectory()) {
+                        // For directories, test path with a trailing slash to match patterns like "node_modules/"
+                        if (ig.ignores(relativePath + '/')) {
+                            continue;
+                        }
                         outputStream.write(`${indent}${entry.name}/\n`);
                         walkDir(fullPath, indent + "  ");
+                    } else {
+                        // For files, test the path as is
+                        if (ig.ignores(relativePath)) {
+                            continue;
+                        }
+                        // We no longer write file names here, that's handled by writeIncludedFileContents
                     }
                 }
             }
@@ -50,17 +56,19 @@ export function generateProjectContextText(
 
                 for (const entry of entries) {
                     const fullPath = path.join(dir, entry.name);
-                    // --- FIX #2: Normalize path separators to forward slashes ---
                     const relativePath = path.relative(projectPath, fullPath).replace(/\\/g, '/');
                     
-                    if (ig.ignores(relativePath)) {
-                        continue;
-                    }
-
+                    // --- CORE FIX: Also check directories with a trailing slash here ---
                     if (entry.isDirectory()) {
+                        if (ig.ignores(relativePath + '/')) {
+                            continue;
+                        }
                         writeIncludedFileContents(fullPath);
                     } else if (entry.isFile()) {
-                        outputStream.write(`\n--- ${relativePath} ---\n`); // No need for extra replace here now
+                        if (ig.ignores(relativePath)) {
+                            continue;
+                        }
+                        outputStream.write(`\n--- ${relativePath} ---\n`);
                         try {
                             const content = fs.readFileSync(fullPath, "utf8");
                             outputStream.write(content + "\n");

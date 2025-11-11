@@ -5,8 +5,12 @@
     // --- Get references to all our UI elements ---
     const loadTemplateBtn = document.getElementById('load-template-btn');
     const rulesContainer = document.getElementById('rules-container');
+    
+    // Section containers
     const refineSection = document.getElementById('refine-section');
     const generateSection = document.getElementById('generate-section');
+
+    // Interactive elements within the sections
     const selectAllCb = document.getElementById('select-all-cb');
     const newRuleInput = document.getElementById('new-rule-input');
     const addRuleBtn = document.getElementById('add-rule-btn');
@@ -14,32 +18,18 @@
 
     // --- State Management ---
     function getCurrentState() {
-        const state = {
-            local: [],
-            template: { name: '', rules: [] },
-            custom: [],
+        const rules = [];
+        const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]');
+        checkboxes.forEach(cb => {
+            rules.push({
+                value: cb.value,
+                checked: cb.checked
+            });
+        });
+        return {
+            rules: rules,
             isVisible: !refineSection.classList.contains('hidden')
         };
-
-        // Scrape rules from each category
-        document.querySelectorAll('#local-rules-list .rule-item').forEach(item => {
-            const checkbox = item.querySelector('input');
-            state.local.push({ value: checkbox.value, checked: checkbox.checked });
-        });
-        const templateHeader = document.getElementById('template-rules-header');
-        if (templateHeader) {
-            state.template.name = templateHeader.dataset.templateName;
-        }
-        document.querySelectorAll('#template-rules-list .rule-item').forEach(item => {
-            const checkbox = item.querySelector('input');
-            state.template.rules.push({ value: checkbox.value, checked: checkbox.checked });
-        });
-        document.querySelectorAll('#custom-rules-list .rule-item').forEach(item => {
-            const checkbox = item.querySelector('input');
-            state.custom.push({ value: checkbox.value, checked: checkbox.checked });
-        });
-
-        return state;
     }
 
     function saveState() {
@@ -113,6 +103,8 @@
             if (newRule.startsWith('.') && !newRule.includes('*') && !newRule.includes('/')) {
                 newRule = '*' + newRule;
             }
+            
+            // --- FIX: Check if an element with this ID already exists ---
             if (!document.getElementById(newRule)) {
                 const ruleItem = createRuleItem(newRule, true);
                 // Ensure the custom list container exists
@@ -127,12 +119,12 @@
                     rulesContainer.appendChild(customList);
                 }
                 customList.appendChild(ruleItem);
-                newRuleInput.value = '';
+                
                 updateSelectAllState();
-                saveState();
-            } else {
-                newRuleInput.value = '';
+                saveState(); // Save state after adding a rule
             }
+            // Clear the input field whether the rule was added or not
+            newRuleInput.value = '';
         }
     }
 
@@ -162,7 +154,7 @@
         ruleItem.className = 'rule-item';
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
-        checkbox.id = ruleValue;
+        checkbox.id = ruleValue; // Use the rule itself as the ID for easy lookup
         checkbox.value = ruleValue;
         checkbox.checked = isChecked;
         const label = document.createElement('label');
@@ -197,7 +189,7 @@
             header.className = 'rules-category-header';
             header.id = 'template-rules-header';
             header.textContent = `From Template (${state.template.name})`;
-            header.dataset.templateName = state.template.name; // Store name for state saving
+            header.dataset.templateName = state.template.name;
             const listDiv = document.createElement('div');
             listDiv.id = 'template-rules-list';
             state.template.rules.forEach(rule => listDiv.appendChild(createRuleItem(rule.value, rule.checked)));
