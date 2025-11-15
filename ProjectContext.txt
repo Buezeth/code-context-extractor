@@ -7232,13 +7232,17 @@ function generateProjectContextText(projectPath, outputFile, ig) {
         for (const entry of entries) {
           const fullPath = path.join(dir, entry.name);
           const relativePath = path.relative(projectPath, fullPath).replace(/\\/g, "/");
-          if (ig.ignores(relativePath)) {
-            continue;
-          }
           if (entry.isDirectory()) {
+            if (ig.ignores(relativePath + "/")) {
+              continue;
+            }
             outputStream.write(`${indent}${entry.name}/
 `);
             walkDir2(fullPath, indent + "  ");
+          } else {
+            if (ig.ignores(relativePath)) {
+              continue;
+            }
           }
         }
       }, writeIncludedFileContents2 = function(dir) {
@@ -7252,12 +7256,15 @@ function generateProjectContextText(projectPath, outputFile, ig) {
         for (const entry of entries) {
           const fullPath = path.join(dir, entry.name);
           const relativePath = path.relative(projectPath, fullPath).replace(/\\/g, "/");
-          if (ig.ignores(relativePath)) {
-            continue;
-          }
           if (entry.isDirectory()) {
+            if (ig.ignores(relativePath + "/")) {
+              continue;
+            }
             writeIncludedFileContents2(fullPath);
           } else if (entry.isFile()) {
+            if (ig.ignores(relativePath)) {
+              continue;
+            }
             outputStream.write(`
 --- ${relativePath} ---
 `);
@@ -7348,8 +7355,9 @@ var import_ignore = __toESM(require_ignore());
 // src/SidebarProvider.ts
 var vscode2 = __toESM(require("vscode"));
 var SidebarProvider = class {
-  constructor(_extensionUri) {
+  constructor(_extensionUri, _workspaceState) {
     this._extensionUri = _extensionUri;
+    this._workspaceState = _workspaceState;
   }
   static viewType = "code-context-extractor-view";
   _view;
@@ -7360,6 +7368,12 @@ var SidebarProvider = class {
       localResourceRoots: [this._extensionUri]
     };
     webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+    webviewView.onDidChangeVisibility(() => {
+      const savedState = this._workspaceState.get("sidebarState");
+      if (savedState) {
+        webviewView.webview.postMessage({ type: "restore-state", state: savedState });
+      }
+    });
     webviewView.webview.onDidReceiveMessage(async (data) => {
       switch (data.type) {
         case "generate": {
@@ -7373,6 +7387,11 @@ var SidebarProvider = class {
           if (rules && this._view) {
             this._view.webview.postMessage({ type: "update-rules", rules });
           }
+          break;
+        }
+        // NEW: Listen for state changes from the UI and save them
+        case "save-state": {
+          await this._workspaceState.update("sidebarState", data.state);
           break;
         }
       }
@@ -7399,11 +7418,11 @@ var SidebarProvider = class {
 
             <hr>
 
-            <h3>Step 1: Choose a Base Filter</h3>
+            <h3>Step 1: Load Ignore Rules</h3>
             <p class="description">
-                Start by loading a standard .gitignore template based on your project's technology. This will provide a good starting list of files and folders to exclude.
+                Load ignore rules from your project's .gitignore, VS Code settings, and optionally add rules from a standard template.
             </p>
-            <button id="load-template-btn">Load Project Type Template</button>
+            <button id="load-template-btn">Load / Refresh Ignore Rules</button>
 
             <!-- This entire section is hidden until a template is loaded -->
             <div id="refine-section" class="hidden">
@@ -7454,7 +7473,7 @@ function getNonce() {
 
 // src/extension.ts
 function activate(context) {
-  const sidebarProvider = new SidebarProvider(context.extensionUri);
+  const sidebarProvider = new SidebarProvider(context.extensionUri, context.workspaceState);
   context.subscriptions.push(
     vscode3.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider)
   );
@@ -7462,25 +7481,73 @@ function activate(context) {
     const workspaceFolders = vscode3.workspace.workspaceFolders;
     if (!workspaceFolders) {
       vscode3.window.showErrorMessage("No workspace folder is open.");
-      return;
+      return {};
     }
     const projectRoot = workspaceFolders[0].uri.fsPath;
+    const localRules = /* @__PURE__ */ new Set();
+    const templateRules = /* @__PURE__ */ new Set();
+    let templateName = "";
+    const addRulesToSet = (content, ruleSet) => {
+      content.split(/\r?\n/).forEach((line) => {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith("#")) {
+          ruleSet.add(trimmed);
+        }
+      });
+    };
+    const localGitignorePath = path3.join(projectRoot, ".gitignore");
+    if (fs2.existsSync(localGitignorePath)) {
+      const localGitignoreContent = fs2.readFileSync(localGitignorePath, "utf8");
+      addRulesToSet(localGitignoreContent, localRules);
+    }
+    const configuration = vscode3.workspace.getConfiguration("code-context-extractor");
+    const excludeDirs = configuration.get("excludeDirs", []);
+    const excludeFiles = configuration.get("excludeFiles", []);
+    excludeDirs.map((dir) => `${dir}/`).forEach((rule) => localRules.add(rule));
+    excludeFiles.forEach((rule) => localRules.add(rule));
     const templates = await getAvailableTemplates();
-    if (templates.length === 0) {
-      vscode3.window.showWarningMessage("Could not fetch .gitignore templates from GitHub.");
-      return [];
+    if (templates.length > 0) {
+      const detected = await detectProjectTypes(projectRoot);
+      const detectedSet = new Set(detected.map((d) => d.toLowerCase()));
+      const suggestedTemplates = [];
+      const otherTemplates = [];
+      templates.sort((a, b) => a.localeCompare(b));
+      templates.forEach((template) => {
+        if (detectedSet.has(template.toLowerCase())) {
+          suggestedTemplates.push({
+            label: template,
+            description: "(Suggested for your project)"
+          });
+        } else {
+          otherTemplates.push({ label: template });
+        }
+      });
+      const allItems = [...suggestedTemplates, ...otherTemplates];
+      const selectedTemplateItem = await vscode3.window.showQuickPick(allItems, {
+        canPickMany: false,
+        placeHolder: "Select a template to add its rules (optional)",
+        title: "Choose a .gitignore Template"
+      });
+      if (selectedTemplateItem) {
+        templateName = selectedTemplateItem.label;
+        const content = await getTemplateContent(templateName);
+        addRulesToSet(content, templateRules);
+      }
     }
-    const detected = await detectProjectTypes(projectRoot);
-    const selectedTemplate = await vscode3.window.showQuickPick(templates, {
-      canPickMany: false,
-      placeHolder: "Select a .gitignore template to load",
-      title: detected.length > 0 ? `Suggested: ${detected.join(", ")}` : "Choose a template"
+    const finalTemplateRules = /* @__PURE__ */ new Set();
+    templateRules.forEach((rule) => {
+      if (!localRules.has(rule)) {
+        finalTemplateRules.add(rule);
+      }
     });
-    if (selectedTemplate) {
-      const content = await getTemplateContent(selectedTemplate);
-      return content.split(/\r?\n/).filter((line) => line.trim() && !line.trim().startsWith("#"));
-    }
-    return [];
+    return {
+      local: Array.from(localRules).sort(),
+      template: {
+        name: templateName,
+        rules: Array.from(finalTemplateRules).sort()
+        // Use the de-duplicated set
+      }
+    };
   });
   const generateCommand = vscode3.commands.registerCommand("code-context-extractor.generate", async (args) => {
     const workspaceFolders = vscode3.workspace.workspaceFolders;
@@ -7490,19 +7557,20 @@ function activate(context) {
     }
     const projectRoot = workspaceFolders[0].uri.fsPath;
     const outputFilePath = path3.join(projectRoot, "ProjectContext.txt");
-    const configuration = vscode3.workspace.getConfiguration("code-context-extractor");
     const ig = (0, import_ignore.default)();
-    const excludeDirs = configuration.get("excludeDirs", []);
-    const excludeFiles = configuration.get("excludeFiles", []);
-    ig.add(excludeDirs.map((dir) => `${dir}/`));
-    ig.add(excludeFiles);
-    if (args?.selectedRules) {
+    ig.add("ProjectContext.txt");
+    ig.add(".git/");
+    if (args?.selectedRules && args.selectedRules.length > 0) {
       ig.add(args.selectedRules);
-    }
-    const localGitignorePath = path3.join(projectRoot, ".gitignore");
-    if (fs2.existsSync(localGitignorePath)) {
-      const localGitignoreContent = fs2.readFileSync(localGitignorePath, "utf8");
-      ig.add(localGitignoreContent);
+    } else {
+      const decision = await vscode3.window.showWarningMessage(
+        "No files/folders are selected for exclusion. This will include everything in your project (including node_modules, .git, etc). Do you want to continue?",
+        { modal: true },
+        "Yes, Continue"
+      );
+      if (decision !== "Yes, Continue") {
+        return;
+      }
     }
     await vscode3.window.withProgress({
       location: vscode3.ProgressLocation.Notification,
@@ -7620,13 +7688,49 @@ hr {
     margin-bottom: 5px;
 }
 
+/* --- ADD THIS NEW RULE FOR DISABLED BUTTONS --- */
+button:disabled {
+    cursor: not-allowed;
+    background-color: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-disabledForeground);
+    opacity: 0.7;
+}
+
+.description {
+    font-size: var(--vscode-font-size);
+    color: var(--vscode-description-foreground);
+    margin-top: 0;
+    margin-bottom: 5px;
+}
+
+button:disabled {
+    cursor: not-allowed;
+    background-color: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-disabledForeground);
+    opacity: 0.7;
+}
+
+/* --- ADD THIS NEW STYLE FOR CATEGORY HEADERS --- */
+.rules-category-header {
+    font-weight: bold;
+    margin-top: 15px;
+    margin-bottom: 5px;
+    color: var(--vscode-foreground);
+    border-bottom: 1px solid var(--vscode-editor-widget-border);
+    padding-bottom: 3px;
+}
+
 --- media\main.js ---
 // media/main.js
 (function () {
     const vscode = acquireVsCodeApi();
 
+    // --- Tell the extension that the webview is ready to receive state ---
+    vscode.postMessage({ type: 'webview-ready' });
+
     // --- Get references to all our UI elements ---
     const loadTemplateBtn = document.getElementById('load-template-btn');
+    // --- Get references to all our UI elements ---
     const rulesContainer = document.getElementById('rules-container');
     
     // Section containers
@@ -7638,93 +7742,214 @@ hr {
     const newRuleInput = document.getElementById('new-rule-input');
     const addRuleBtn = document.getElementById('add-rule-btn');
     const generateBtn = document.getElementById('generate-btn');
+    // --- State Management ---
+    function getCurrentState() {
+        const state = {
+            local: [],
+            template: { name: '', rules: [] },
+            custom: [],
+            isVisible: !refineSection.classList.contains('hidden')
+        };
+
+        // Scrape rules from each category
+        document.querySelectorAll('#local-rules-list .rule-item').forEach(item => {
+            const checkbox = item.querySelector('input');
+            state.local.push({ value: checkbox.value, checked: checkbox.checked });
+        });
+        const templateHeader = document.getElementById('template-rules-header');
+        if (templateHeader) {
+            state.template.name = templateHeader.dataset.templateName;
+        }
+        document.querySelectorAll('#template-rules-list .rule-item').forEach(item => {
+            const checkbox = item.querySelector('input');
+            state.template.rules.push({ value: checkbox.value, checked: checkbox.checked });
+        });
+        document.querySelectorAll('#custom-rules-list .rule-item').forEach(item => {
+            const checkbox = item.querySelector('input');
+            state.custom.push({ value: checkbox.value, checked: checkbox.checked });
+        });
+
+        return state;
+    }
+
+    function saveState() {
+        vscode.postMessage({
+            type: 'save-state',
+            state: getCurrentState()
+        });
+    }
 
     // --- Handle messages FROM the extension ---
     window.addEventListener('message', event => {
         const message = event.data;
-        if (message.type === 'update-rules') {
-            const rules = message.rules;
-            populateRulesList(rules);
-
-            // If rules were loaded, show the next steps
-            if (rules && rules.length > 0) {
-                refineSection.classList.remove('hidden');
-                generateSection.classList.remove('hidden');
-            } else {
-                // If no rules (e.g., user cancelled), hide the sections
-                refineSection.classList.add('hidden');
-                generateSection.classList.add('hidden');
+        switch (message.type) {
+            case 'update-rules': {
+                const { local, template } = message.rules;
+                const state = {
+                    local: local.map(r => ({ value: r, checked: true })),
+                    template: {
+                        name: template.name,
+                        rules: template.rules.map(r => ({ value: r, checked: true }))
+                    },
+                    custom: [] // Start with no custom rules on a fresh load
+                };
+                populateRulesList(state);
+                if (state.local.length > 0 || state.template.rules.length > 0) {
+                    refineSection.classList.remove('hidden');
+                    generateSection.classList.remove('hidden');
+                } else {
+                    refineSection.classList.add('hidden');
+                    generateSection.classList.add('hidden');
+                }
+                loadTemplateBtn.disabled = false;
+                loadTemplateBtn.textContent = 'Load / Refresh Ignore Rules';
+                saveState();
+                break;
+            }
+            case 'restore-state': {
+                const state = message.state;
+                if (state) {
+                    populateRulesList(state);
+                    if (state.isVisible) {
+                        refineSection.classList.remove('hidden');
+                        generateSection.classList.remove('hidden');
+                    } else {
+                        refineSection.classList.add('hidden');
+                        generateSection.classList.add('hidden');
+                    }
+                }
+                break;
             }
         }
     });
 
-    // --- Event Listeners for buttons ---
+    // --- Event Listeners ---
     loadTemplateBtn.addEventListener('click', () => {
+        loadTemplateBtn.disabled = true;
+        loadTemplateBtn.textContent = 'Loading templates...';
         vscode.postMessage({ type: 'load-template' });
     });
 
     generateBtn.addEventListener('click', () => {
         const selectedRules = [];
-        const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]');
-        checkboxes.forEach(cb => {
-            if (cb.checked) {
-                selectedRules.push(cb.value);
-            }
-        });
+        const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]:checked');
+        checkboxes.forEach(cb => selectedRules.push(cb.value));
         vscode.postMessage({ type: 'generate', rules: selectedRules });
     });
 
-    addRuleBtn.addEventListener('click', () => {
-        const newRule = newRuleInput.value.trim();
+    function addNewRule() {
+        let newRule = newRuleInput.value.trim();
         if (newRule) {
-            const ruleItem = createRuleItem(newRule, true);
-            rulesContainer.appendChild(ruleItem);
-            newRuleInput.value = '';
-            updateSelectAllState();
+            if (newRule.startsWith('.') && !newRule.includes('*') && !newRule.includes('/')) {
+                newRule = '*' + newRule;
+            }
+            if (!document.getElementById(newRule)) {
+                const ruleItem = createRuleItem(newRule, true);
+                let customList = document.getElementById('custom-rules-list');
+                if (!customList) {
+                    const header = document.createElement('h4');
+                    header.className = 'rules-category-header';
+                    header.textContent = 'Custom Rules';
+                    rulesContainer.appendChild(header);
+                    customList = document.createElement('div');
+                    customList.id = 'custom-rules-list';
+                    rulesContainer.appendChild(customList);
+                }
+                customList.appendChild(ruleItem);
+                newRuleInput.value = '';
+                updateSelectAllState();
+                saveState();
+            } else {
+                newRuleInput.value = '';
+            }
+        }
+    }
+
+    addRuleBtn.addEventListener('click', addNewRule);
+    newRuleInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            addNewRule();
         }
     });
 
-    // --- Event Listeners for checkboxes ---
     selectAllCb.addEventListener('change', (e) => {
         const isChecked = e.target.checked;
-        const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]');
-        checkboxes.forEach(cb => cb.checked = isChecked);
+        rulesContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = isChecked);
+        saveState();
     });
 
     rulesContainer.addEventListener('change', (e) => {
         if (e.target.matches('input[type="checkbox"]')) {
             updateSelectAllState();
+            saveState();
         }
     });
 
     // --- Helper Functions ---
-    function createRuleItem(rule, isChecked) {
+    function createRuleItem(ruleValue, isChecked) {
         const ruleItem = document.createElement('div');
         ruleItem.className = 'rule-item';
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
-        checkbox.id = rule;
-        checkbox.value = rule;
+        checkbox.id = ruleValue;
+        checkbox.value = ruleValue;
         checkbox.checked = isChecked;
         const label = document.createElement('label');
-        label.htmlFor = rule;
-        label.textContent = rule;
+        label.htmlFor = ruleValue;
+        label.textContent = ruleValue;
         ruleItem.appendChild(checkbox);
         ruleItem.appendChild(label);
         return ruleItem;
     }
 
-    function populateRulesList(rules) {
+    function populateRulesList(state) {
         rulesContainer.innerHTML = '';
-        if (!rules || rules.length === 0) {
+        let hasContent = false;
+
+        if (state.local && state.local.length > 0) {
+            hasContent = true;
+            const header = document.createElement('h4');
+            header.className = 'rules-category-header';
+            header.textContent = 'From .gitignore & Settings';
+            const listDiv = document.createElement('div');
+            listDiv.id = 'local-rules-list';
+            state.local.forEach(rule => listDiv.appendChild(createRuleItem(rule.value, rule.checked)));
+            rulesContainer.appendChild(header);
+            rulesContainer.appendChild(listDiv);
+        }
+        
+        if (state.template && state.template.rules.length > 0) {
+            hasContent = true;
+            const header = document.createElement('h4');
+            header.className = 'rules-category-header';
+            header.id = 'template-rules-header';
+            header.textContent = `From Template (${state.template.name})`;
+            header.dataset.templateName = state.template.name;
+            const listDiv = document.createElement('div');
+            listDiv.id = 'template-rules-list';
+            state.template.rules.forEach(rule => listDiv.appendChild(createRuleItem(rule.value, rule.checked)));
+            rulesContainer.appendChild(header);
+            rulesContainer.appendChild(listDiv);
+        }
+
+        if (state.custom && state.custom.length > 0) {
+            hasContent = true;
+            const header = document.createElement('h4');
+            header.className = 'rules-category-header';
+            header.textContent = 'Custom Rules';
+            const listDiv = document.createElement('div');
+            listDiv.id = 'custom-rules-list';
+            state.custom.forEach(rule => listDiv.appendChild(createRuleItem(rule.value, rule.checked)));
+            rulesContainer.appendChild(header);
+            rulesContainer.appendChild(listDiv);
+        }
+        
+        if (!hasContent) {
             selectAllCb.checked = false;
             return;
         }
-        rules.forEach(rule => {
-            const ruleItem = createRuleItem(rule, true);
-            rulesContainer.appendChild(ruleItem);
-        });
-        selectAllCb.checked = true;
+
+        updateSelectAllState();
     }
 
     function updateSelectAllState() {
@@ -7785,16 +8010,22 @@ export function generateProjectContextText(
             
                 for (const entry of entries) {
                     const fullPath = path.join(dir, entry.name);
-                    // --- FIX #1: Normalize path separators to forward slashes ---
                     const relativePath = path.relative(projectPath, fullPath).replace(/\\/g, '/');
 
-                    if (ig.ignores(relativePath)) {
-                        continue;
-                    }
-            
+                    // --- CORE FIX: Check directories with a trailing slash ---
                     if (entry.isDirectory()) {
+                        // For directories, test path with a trailing slash to match patterns like "node_modules/"
+                        if (ig.ignores(relativePath + '/')) {
+                            continue;
+                        }
                         outputStream.write(`${indent}${entry.name}/\n`);
                         walkDir(fullPath, indent + "  ");
+                    } else {
+                        // For files, test the path as is
+                        if (ig.ignores(relativePath)) {
+                            continue;
+                        }
+                        // We no longer write file names here, that's handled by writeIncludedFileContents
                     }
                 }
             }
@@ -7809,17 +8040,19 @@ export function generateProjectContextText(
 
                 for (const entry of entries) {
                     const fullPath = path.join(dir, entry.name);
-                    // --- FIX #2: Normalize path separators to forward slashes ---
                     const relativePath = path.relative(projectPath, fullPath).replace(/\\/g, '/');
                     
-                    if (ig.ignores(relativePath)) {
-                        continue;
-                    }
-
+                    // --- CORE FIX: Also check directories with a trailing slash here ---
                     if (entry.isDirectory()) {
+                        if (ig.ignores(relativePath + '/')) {
+                            continue;
+                        }
                         writeIncludedFileContents(fullPath);
                     } else if (entry.isFile()) {
-                        outputStream.write(`\n--- ${relativePath} ---\n`); // No need for extra replace here now
+                        if (ig.ignores(relativePath)) {
+                            continue;
+                        }
+                        outputStream.write(`\n--- ${relativePath} ---\n`);
                         try {
                             const content = fs.readFileSync(fullPath, "utf8");
                             outputStream.write(content + "\n");
@@ -7856,95 +8089,141 @@ import { SidebarProvider } from './SidebarProvider';
 
 export function activate(context: vscode.ExtensionContext) {
 
-    // Register the Sidebar Panel
-    const sidebarProvider = new SidebarProvider(context.extensionUri);
+    const sidebarProvider = new SidebarProvider(context.extensionUri, context.workspaceState);
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider)
     );
 
-    // COMMAND 1: Loads gitignore rules and returns them (for the UI)
     const loadTemplateCommand = vscode.commands.registerCommand('code-context-extractor.loadTemplateRules', async () => {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders) {
+            vscode.window.showErrorMessage('No workspace folder is open.');
+            return {};
+        }
+        const projectRoot = workspaceFolders[0].uri.fsPath;
+
+        const localRules = new Set<string>();
+        const templateRules = new Set<string>();
+        let templateName = '';
+
+        const addRulesToSet = (content: string, ruleSet: Set<string>) => {
+            content.split(/\r?\n/).forEach(line => {
+                const trimmed = line.trim();
+                if (trimmed && !trimmed.startsWith('#')) {
+                    ruleSet.add(trimmed);
+                }
+            });
+        };
+
+        // 1. Add rules from local .gitignore and settings
+        const localGitignorePath = path.join(projectRoot, '.gitignore');
+        if (fs.existsSync(localGitignorePath)) {
+            const localGitignoreContent = fs.readFileSync(localGitignorePath, 'utf8');
+            addRulesToSet(localGitignoreContent, localRules);
+        }
+        const configuration = vscode.workspace.getConfiguration('code-context-extractor');
+        const excludeDirs = configuration.get<string[]>('excludeDirs', []);
+        const excludeFiles = configuration.get<string[]>('excludeFiles', []);
+        excludeDirs.map(dir => `${dir}/`).forEach(rule => localRules.add(rule));
+        excludeFiles.forEach(rule => localRules.add(rule));
+
+        // 2. Ask user to select a template to add MORE rules
+        const templates = await getAvailableTemplates();
+        if (templates.length > 0) {
+            const detected = await detectProjectTypes(projectRoot);
+            const detectedSet = new Set(detected.map(d => d.toLowerCase()));
+            const suggestedTemplates: vscode.QuickPickItem[] = [];
+            const otherTemplates: vscode.QuickPickItem[] = [];
+
+            templates.sort((a, b) => a.localeCompare(b));
+
+            templates.forEach(template => {
+                if (detectedSet.has(template.toLowerCase())) {
+                    suggestedTemplates.push({
+                        label: template,
+                        description: '(Suggested for your project)'
+                    });
+                } else {
+                    otherTemplates.push({ label: template });
+                }
+            });
+
+            const allItems = [...suggestedTemplates, ...otherTemplates];
+            const selectedTemplateItem = await vscode.window.showQuickPick(allItems, {
+                canPickMany: false,
+                placeHolder: 'Select a template to add its rules (optional)',
+                title: 'Choose a .gitignore Template'
+            });
+
+            if (selectedTemplateItem) {
+                templateName = selectedTemplateItem.label;
+                const content = await getTemplateContent(templateName);
+                addRulesToSet(content, templateRules);
+            }
+        }
+        
+        // --- CORE FIX: De-duplicate rules, giving priority to localRules ---
+        const finalTemplateRules = new Set<string>();
+        templateRules.forEach(rule => {
+            if (!localRules.has(rule)) {
+                finalTemplateRules.add(rule);
+            }
+        });
+        // --- END FIX ---
+
+        // Return a structured object with categorized rules
+        return {
+            local: Array.from(localRules).sort(),
+            template: {
+                name: templateName,
+                rules: Array.from(finalTemplateRules).sort() // Use the de-duplicated set
+            }
+        };
+    });
+
+    // COMMAND 2: Generates the context file (no changes needed here)
+    const generateCommand = vscode.commands.registerCommand('code-context-extractor.generate', async (args?: { selectedRules?: string[] }) => {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
             vscode.window.showErrorMessage('No workspace folder is open.');
             return;
         }
         const projectRoot = workspaceFolders[0].uri.fsPath;
+        const outputFilePath = path.join(projectRoot, 'ProjectContext.txt');
+        
+        const ig = ignore();
 
-        const templates = await getAvailableTemplates();
-        if (templates.length === 0) {
-            vscode.window.showWarningMessage('Could not fetch .gitignore templates from GitHub.');
-            return [];
+        ig.add('ProjectContext.txt');
+        ig.add('.git/');
+
+        if (args?.selectedRules && args.selectedRules.length > 0) {
+            ig.add(args.selectedRules);
+        } else {
+            const decision = await vscode.window.showWarningMessage(
+                "No files/folders are selected for exclusion. This will include everything in your project (including node_modules, .git, etc). Do you want to continue?",
+                { modal: true },
+                'Yes, Continue'
+            );
+            if (decision !== 'Yes, Continue') {
+                return; 
+            }
         }
-
-        const detected = await detectProjectTypes(projectRoot);
-        const selectedTemplate = await vscode.window.showQuickPick(templates, {
-            canPickMany: false,
-            placeHolder: 'Select a .gitignore template to load',
-            title: detected.length > 0 ? `Suggested: ${detected.join(', ')}` : 'Choose a template'
+        
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: 'Generating Project Context',
+            cancellable: false
+        }, async (progress) => {
+            progress.report({ message: 'Scanning files...' });
+            try {
+                await generateProjectContextText(projectRoot, outputFilePath, ig);
+                vscode.window.showInformationMessage('Successfully generated ProjectContext.txt!');
+                await vscode.window.showTextDocument(vscode.Uri.file(outputFilePath));
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to generate context: ${(error as Error).message}`);
+            }
         });
-
-        if (selectedTemplate) {
-            const content = await getTemplateContent(selectedTemplate);
-            // Parse and filter out comments/empty lines before returning
-            return content.split(/\r?\n/).filter(line => line.trim() && !line.trim().startsWith('#'));
-        }
-        return [];
     });
-
-    // COMMAND 2: Generates the context file (now accepts rules from the UI)
-    const generateCommand = vscode.commands.registerCommand('code-context-extractor.generate', async (args?: { selectedRules?: string[] }) => {
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders) {
-        vscode.window.showErrorMessage('No workspace folder is open.');
-        return;
-    }
-    const projectRoot = workspaceFolders[0].uri.fsPath;
-    const outputFilePath = path.join(projectRoot, 'ProjectContext.txt');
-    
-    const configuration = vscode.workspace.getConfiguration('code-context-extractor');
-    const ig = ignore();
-
-    // 1. Add rules from user's global settings
-    const excludeDirs = configuration.get<string[]>('excludeDirs', []);
-    const excludeFiles = configuration.get<string[]>('excludeFiles', []);
-    ig.add(excludeDirs.map(dir => `${dir}/`));
-    ig.add(excludeFiles);
-
-    // 2. Add rules selected from the UI (if any)
-    if (args?.selectedRules) {
-        ig.add(args.selectedRules);
-    }
-
-    // 3. Add rules from local .gitignore
-    const localGitignorePath = path.join(projectRoot, '.gitignore');
-    if (fs.existsSync(localGitignorePath)) {
-        const localGitignoreContent = fs.readFileSync(localGitignorePath, 'utf8');
-        ig.add(localGitignoreContent);
-    }
-
-    // --- THIS BLOCK IS REMOVED ---
-    // const config = {
-    //     allowedExtensions: configuration.get<string[]>('allowedExtensions', [])
-    // };
-    
-    await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: 'Generating Project Context',
-        cancellable: false
-    }, async (progress) => {
-        progress.report({ message: 'Scanning files...' });
-        try {
-            // Pass only the ignore instance, no longer the config object
-            await generateProjectContextText(projectRoot, outputFilePath, ig);
-            vscode.window.showInformationMessage('Successfully generated ProjectContext.txt!');
-            await vscode.window.showTextDocument(vscode.Uri.file(outputFilePath));
-        } catch (error) {
-            vscode.window.showErrorMessage(`Failed to generate context: ${(error as Error).message}`);
-        }
-    });
-});
-
 
     context.subscriptions.push(loadTemplateCommand, generateCommand);
 }
@@ -8044,7 +8323,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     private _view?: vscode.WebviewView;
 
-    constructor(private readonly _extensionUri: vscode.Uri) {}
+    constructor(
+        private readonly _extensionUri: vscode.Uri,
+        private readonly _workspaceState: vscode.Memento // Add Memento to constructor
+    ) {}
 
     public async resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -8060,28 +8342,39 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
+    // On initial load, send any saved state to the webview
+    webviewView.onDidChangeVisibility(() => {
+        const savedState = this._workspaceState.get('sidebarState');
+        if (savedState) {
+            webviewView.webview.postMessage({ type: 'restore-state', state: savedState });
+        }
+    });
+
     // Handle messages from the webview
     webviewView.webview.onDidReceiveMessage(async (data) => {
         switch (data.type) {
             case 'generate': {
-                // Execute the generate command with the selected rules as an argument
                 vscode.commands.executeCommand('code-context-extractor.generate', {
                     selectedRules: data.rules
                 });
                 break;
             }
             case 'load-template': {
-                // Call the new command to get the rules
                 const rules = await vscode.commands.executeCommand<string[]>('code-context-extractor.loadTemplateRules');
                 if (rules && this._view) {
-                    // Send the rules back to the webview to be displayed
                     this._view.webview.postMessage({ type: 'update-rules', rules: rules });
                 }
+                break;
+            }
+            // NEW: Listen for state changes from the UI and save them
+            case 'save-state': {
+                await this._workspaceState.update('sidebarState', data.state);
                 break;
             }
         }
     });
 }
+
 
     private _getHtmlForWebview(webview: vscode.Webview) {
     const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'main.js'));
@@ -8105,11 +8398,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
             <hr>
 
-            <h3>Step 1: Choose a Base Filter</h3>
+            <h3>Step 1: Load Ignore Rules</h3>
             <p class="description">
-                Start by loading a standard .gitignore template based on your project's technology. This will provide a good starting list of files and folders to exclude.
+                Load ignore rules from your project's .gitignore, VS Code settings, and optionally add rules from a standard template.
             </p>
-            <button id="load-template-btn">Load Project Type Template</button>
+            <button id="load-template-btn">Load / Refresh Ignore Rules</button>
 
             <!-- This entire section is hidden until a template is loaded -->
             <div id="refine-section" class="hidden">
@@ -8393,6 +8686,8 @@ generateProjectContextText(projectPath, "ProjectContext.txt"); // Changed output
   "displayName": "Code Context Extractor",
   "description": "Used to extract code context into a txt file that can be used to feed AI ",
   "version": "0.0.1",
+  "publisher": "ct-dev",
+  "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.105.0"
   },
@@ -8407,8 +8702,8 @@ generateProjectContextText(projectPath, "ProjectContext.txt"); // Changed output
   "contributes": {
     "commands": [
       {
-        "command": "code-context-extractor.loadTemplateRules",
-        "title": "Generate Project Context File"
+        "command": "code-context-extractor.generate",
+        "title": "Code Context: Generate Project Context File"
       }
     ],
     "configuration": {
@@ -8425,13 +8720,8 @@ generateProjectContextText(projectPath, "ProjectContext.txt"); // Changed output
             "type": "string"
           },
           "default": [
-            "vendor",
             ".git",
-            "node_modules",
-            ".next",
-            ".vscode",
-            "dist",
-            "out"
+            ".vscode"
           ],
           "description": "List of directory names to exclude from the context file."
         },

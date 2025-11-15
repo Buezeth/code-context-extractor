@@ -3,6 +3,8 @@
   "displayName": "Code Context Extractor",
   "description": "Used to extract code context into a txt file that can be used to feed AI ",
   "version": "0.0.1",
+  "publisher": "ct-dev",
+  "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.105.0"
   },
