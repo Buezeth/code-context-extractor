@@ -5,6 +5,11 @@
   "version": "0.0.1",
   "publisher": "ct-dev",
   "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Buezeth/code-context-extractor"
+  },
+  "license": "MIT",
   "engines": {
     "vscode": "^1.105.0"
   },

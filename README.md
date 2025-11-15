@@ -1,71 +1,35 @@
-# code-context-extractor README
+# Code Context Extractor
 
-This is the README for your extension "code-context-extractor". After writing up a brief description, we recommend including the following sections.
+This Visual Studio Code extension helps you create a single text file containing your project's folder structure and the content of all relevant files. It's designed to make it easy to copy-paste your entire project's context into large language models (LLMs) like GPT-4, Claude, or Gemini.
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+*   **Sidebar UI**: An easy-to-use interface right in the VS Code activity bar.
+*   **.gitignore Integration**: Automatically loads rules from your project's `.gitignore` file and your global VS Code settings to provide a smart starting point for exclusions.
+*   **Template Loading**: Choose from standard `.gitignore` templates (e.g., Node, Python, Go) to quickly add common ignore patterns for your project type.
+*   **Dynamic Filtering**: Easily review, modify, and add custom rules to fine-tune which files and folders are included in the final context file.
+*   **State Persistence**: Your list of ignore rules is saved per workspace, so you don't have to reconfigure it every time you open VS Code.
 
-For example if there is an image subfolder under your extension project workspace:
+## How to Use
 
-\!\[feature X\]\(images/feature-x.png\)
-
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
-
-## Requirements
-
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+1.  Click on the **Code Context Extractor** icon in the activity bar to open the sidebar.
+2.  Click **"Load / Refresh Ignore Rules"**. This will populate a list of files and folders to exclude based on your project's `.gitignore` and settings. You can also select a standard template to add more rules.
+3.  In "Step 2", review the list of rules. Uncheck any files or folders you *want* to include. Add any custom rules you need.
+4.  Click **"Generate Context File"**.
+5.  A `ProjectContext.txt` file will be created in the root of your workspace and automatically opened for you.
 
 ## Extension Settings
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
-
-For example:
-
 This extension contributes the following settings:
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
-
-## Known Issues
-
-Calling out known issues can help limit users opening duplicate issues against your extension.
+*   `code-context-extractor.excludeDirs`: A list of directory names to always exclude (e.g., "node_modules", ".git").
+*   `code-context-extractor.excludeFiles`: A list of file names to always exclude (e.g., "package-lock.json").
 
 ## Release Notes
 
-Users appreciate release notes as you update your extension.
+### 0.0.1
 
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+- Initial release of Code Context Extractor.
+- Added sidebar UI for generating context files.
+- Implemented .gitignore and settings integration.
+- Added GitHub .gitignore template fetching.
