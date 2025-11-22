@@ -310,172 +310,325 @@ button:disabled {
     padding-bottom: 3px;
 }
 
+/* --- NEW STYLES FOR TOGGLE --- */
+/* .mode-toggle-container {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 15px;
+    background-color: var(--vscode-editor-inactiveSelectionBackground);
+    padding: 10px;
+    border-radius: 4px;
+}
+
+.mode-option {
+    display: flex;
+    align-items: flex-start;
+}
+
+.mode-option input {
+    margin-top: 3px;
+    margin-right: 8px;
+}
+
+.mode-option label {
+    cursor: pointer;
+} */
+
+/* --- SEGMENTED CONTROL (TOGGLE) --- */
+.toggle-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    /* background-color: var(--vscode-button-secondaryBackground); */
+    /* background-color: var(--vscode-disabledForeground); */
+    padding: 2px;
+    border-radius: 4px;
+    border-color: white;
+    margin-bottom: 20px;
+}
+
+.toggle-btn {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--vscode-button-secondaryForeground);
+    padding: 6px 12px;
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+    cursor: pointer;
+    border-radius: 2px;
+    transition: background-color 0.2s;
+    outline: none;
+}
+
+.toggle-btn:hover {
+    background-color: var(--vscode-button-secondaryHoverBackground);
+}
+
+.toggle-btn.active {
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    font-weight: 600;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+/* --- UTILS --- */
+.hidden {
+    display: none !important;
+}
+
+.section-header {
+    margin-top: 15px;
+    margin-bottom: 10px;
+    font-weight: bold;
+    opacity: 0.9;
+}
+
 --- media/main.js ---
 // media/main.js
 (function () {
     const vscode = acquireVsCodeApi();
 
-    // --- Tell the extension that the webview is ready to receive state ---
-    vscode.postMessage({ type: 'webview-ready' });
+    // --- INTERNAL STATE ---
+    // We keep both lists in memory so switching doesn't lose data
+    let appState = {
+        mode: 'exclude', // 'exclude' | 'include'
+        excludeRules: [], // Array of { value: string, checked: boolean }
+        includeRules: []  // Array of { value: string, checked: boolean }
+    };
 
-    // --- Get references to all our UI elements ---
-    const loadTemplateBtn = document.getElementById('load-template-btn');
-    // --- Get references to all our UI elements ---
+    // --- UI REFERENCES ---
+    const btnExclude = document.getElementById('btn-mode-exclude');
+    const btnInclude = document.getElementById('btn-mode-include');
+    const modeDesc = document.getElementById('mode-description');
+    
+    const excludeControls = document.getElementById('exclude-controls');
+    const includeControls = document.getElementById('include-controls');
+    
+    const rulesSection = document.getElementById('rules-section');
+    const listHeader = document.getElementById('list-header');
     const rulesContainer = document.getElementById('rules-container');
     
-    // Section containers
-    const refineSection = document.getElementById('refine-section');
-    const generateSection = document.getElementById('generate-section');
-
-    // Interactive elements within the sections
-    const selectAllCb = document.getElementById('select-all-cb');
+    const loadTemplateBtn = document.getElementById('load-template-btn');
     const newRuleInput = document.getElementById('new-rule-input');
     const addRuleBtn = document.getElementById('add-rule-btn');
+    const selectAllCb = document.getElementById('select-all-cb');
     const generateBtn = document.getElementById('generate-btn');
-    // --- State Management ---
-    function getCurrentState() {
-        const state = {
-            local: [],
-            template: { name: '', rules: [] },
-            custom: [],
-            isVisible: !refineSection.classList.contains('hidden')
-        };
 
-        // Scrape rules from each category
-        document.querySelectorAll('#local-rules-list .rule-item').forEach(item => {
-            const checkbox = item.querySelector('input');
-            state.local.push({ value: checkbox.value, checked: checkbox.checked });
+    // --- INITIALIZATION ---
+    vscode.postMessage({ type: 'webview-ready' });
+
+    // --- CORE LOGIC ---
+
+    /**
+     * Syncs the DOM (what the user sees) back to our appState variable.
+     * Should be called before switching modes or saving.
+     */
+    function syncDomToState() {
+        const currentRules = [];
+        rulesContainer.querySelectorAll('.rule-item').forEach(item => {
+            const cb = item.querySelector('input');
+            currentRules.push({ value: cb.value, checked: cb.checked });
         });
-        const templateHeader = document.getElementById('template-rules-header');
-        if (templateHeader) {
-            state.template.name = templateHeader.dataset.templateName;
+
+        if (appState.mode === 'exclude') {
+            appState.excludeRules = currentRules;
+        } else {
+            appState.includeRules = currentRules;
         }
-        document.querySelectorAll('#template-rules-list .rule-item').forEach(item => {
-            const checkbox = item.querySelector('input');
-            state.template.rules.push({ value: checkbox.value, checked: checkbox.checked });
-        });
-        document.querySelectorAll('#custom-rules-list .rule-item').forEach(item => {
-            const checkbox = item.querySelector('input');
-            state.custom.push({ value: checkbox.value, checked: checkbox.checked });
-        });
-
-        return state;
     }
 
-    function saveState() {
-        vscode.postMessage({
-            type: 'save-state',
-            state: getCurrentState()
-        });
+    /**
+     * Renders the list based on the current appState.mode
+     */
+    function renderList() {
+        rulesContainer.innerHTML = ''; // Clear current view
+        
+        const rulesToRender = appState.mode === 'exclude' 
+            ? appState.excludeRules 
+            : appState.includeRules;
+
+        if (rulesToRender.length === 0) {
+            // If exclude mode is empty, hide the section (until loaded).
+            // If include mode is empty, show it (so they can add).
+            if (appState.mode === 'exclude') {
+                rulesSection.classList.add('hidden');
+            } else {
+                rulesSection.classList.remove('hidden');
+            }
+        } else {
+            rulesSection.classList.remove('hidden');
+            rulesToRender.forEach(rule => {
+                rulesContainer.appendChild(createRuleItem(rule.value, rule.checked));
+            });
+        }
+
+        updateSelectAllState();
     }
 
-    // --- Handle messages FROM the extension ---
-    window.addEventListener('message', event => {
-        const message = event.data;
-        switch (message.type) {
-            case 'update-rules': {
-                const { local, template } = message.rules;
-                const state = {
-                    local: local.map(r => ({ value: r, checked: true })),
-                    template: {
-                        name: template.name,
-                        rules: template.rules.map(r => ({ value: r, checked: true }))
-                    },
-                    custom: [] // Start with no custom rules on a fresh load
-                };
-                populateRulesList(state);
-                if (state.local.length > 0 || state.template.rules.length > 0) {
-                    refineSection.classList.remove('hidden');
-                    generateSection.classList.remove('hidden');
-                } else {
-                    refineSection.classList.add('hidden');
-                    generateSection.classList.add('hidden');
-                }
-                loadTemplateBtn.disabled = false;
-                loadTemplateBtn.textContent = 'Load / Refresh Ignore Rules';
-                saveState();
-                break;
-            }
-            case 'restore-state': {
-                const state = message.state;
-                if (state) {
-                    populateRulesList(state);
-                    if (state.isVisible) {
-                        refineSection.classList.remove('hidden');
-                        generateSection.classList.remove('hidden');
-                    } else {
-                        refineSection.classList.add('hidden');
-                        generateSection.classList.add('hidden');
-                    }
-                }
-                break;
-            }
-        }
-    });
+    /**
+     * Switches the UI mode and updates state
+     */
+    function setMode(newMode) {
+        // 1. Save what's currently on screen before switching
+        syncDomToState();
 
-    // --- Event Listeners ---
+        // 2. Update internal mode
+        appState.mode = newMode;
+
+        // 3. Update UI Classes
+        if (newMode === 'exclude') {
+            btnExclude.classList.add('active');
+            btnInclude.classList.remove('active');
+            modeDesc.innerHTML = `<strong>Blacklist:</strong> Everything is included by default. Check items below to <em>exclude</em> them.`;
+            excludeControls.classList.remove('hidden');
+            includeControls.classList.add('hidden');
+            listHeader.textContent = "2. Refine Exclusions";
+        } else {
+            btnInclude.classList.add('active');
+            btnExclude.classList.remove('active');
+            modeDesc.innerHTML = `<strong>Whitelist:</strong> Everything is ignored by default. Add items below to <em>include</em> them.`;
+            excludeControls.classList.add('hidden');
+            includeControls.classList.remove('hidden');
+            listHeader.textContent = "2. Whitelist Files";
+        }
+
+        // 4. Re-render list for the new mode
+        renderList();
+        
+        // 5. Persist
+        saveStateToExtension();
+    }
+
+    // --- EVENT LISTENERS ---
+
+    btnExclude.addEventListener('click', () => setMode('exclude'));
+    btnInclude.addEventListener('click', () => setMode('include'));
+
     loadTemplateBtn.addEventListener('click', () => {
         loadTemplateBtn.disabled = true;
-        loadTemplateBtn.textContent = 'Loading templates...';
+        loadTemplateBtn.textContent = 'Loading...';
         vscode.postMessage({ type: 'load-template' });
-    });
-
-    generateBtn.addEventListener('click', () => {
-        const selectedRules = [];
-        const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]:checked');
-        checkboxes.forEach(cb => selectedRules.push(cb.value));
-        vscode.postMessage({ type: 'generate', rules: selectedRules });
     });
 
     function addNewRule() {
         let newRule = newRuleInput.value.trim();
-        if (newRule) {
-            if (newRule.startsWith('.') && !newRule.includes('*') && !newRule.includes('/')) {
-                newRule = '*' + newRule;
-            }
-            if (!document.getElementById(newRule)) {
-                const ruleItem = createRuleItem(newRule, true);
-                let customList = document.getElementById('custom-rules-list');
-                if (!customList) {
-                    const header = document.createElement('h4');
-                    header.className = 'rules-category-header';
-                    header.textContent = 'Custom Rules';
-                    rulesContainer.appendChild(header);
-                    customList = document.createElement('div');
-                    customList.id = 'custom-rules-list';
-                    rulesContainer.appendChild(customList);
-                }
-                customList.appendChild(ruleItem);
-                newRuleInput.value = '';
-                updateSelectAllState();
-                saveState();
-            } else {
-                newRuleInput.value = '';
-            }
+        if (!newRule) return;
+
+        // Format rule
+        if (newRule.startsWith('.') && !newRule.includes('*') && !newRule.includes('/')) {
+            newRule = '*' + newRule;
+        }
+
+        // Check for duplicates in the current DOM
+        if (!document.getElementById(newRule)) {
+            const ruleItem = createRuleItem(newRule, true);
+            // Add to top
+            rulesContainer.prepend(ruleItem);
+            
+            // Reveal section if it was hidden
+            rulesSection.classList.remove('hidden');
+            
+            newRuleInput.value = '';
+            updateSelectAllState();
+            
+            // Save immediately
+            syncDomToState();
+            saveStateToExtension();
         }
     }
 
     addRuleBtn.addEventListener('click', addNewRule);
-    newRuleInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-            addNewRule();
-        }
-    });
+    newRuleInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') addNewRule(); });
 
-    selectAllCb.addEventListener('change', (e) => {
-        const isChecked = e.target.checked;
-        rulesContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = isChecked);
-        saveState();
-    });
-
+    // Checkbox changes
     rulesContainer.addEventListener('change', (e) => {
         if (e.target.matches('input[type="checkbox"]')) {
             updateSelectAllState();
-            saveState();
+            syncDomToState();
+            saveStateToExtension();
         }
     });
 
-    // --- Helper Functions ---
+    // Select All changes
+    selectAllCb.addEventListener('change', (e) => {
+        const isChecked = e.target.checked;
+        rulesContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = isChecked);
+        syncDomToState();
+        saveStateToExtension();
+    });
+
+    generateBtn.addEventListener('click', () => {
+        // Make sure we have the latest data
+        syncDomToState(); 
+
+        const activeRules = appState.mode === 'exclude' ? appState.excludeRules : appState.includeRules;
+        
+        // Only send checked items
+        const selectedRules = activeRules
+            .filter(r => r.checked)
+            .map(r => r.value);
+
+        vscode.postMessage({ 
+            type: 'generate', 
+            rules: selectedRules,
+            mode: appState.mode
+        });
+    });
+
+    // --- MESSAGE HANDLING ---
+
+    window.addEventListener('message', event => {
+        const message = event.data;
+
+        switch (message.type) {
+            case 'restore-state':
+                if (message.state) {
+                    // Restore the full state object
+                    appState = message.state;
+                    
+                    // Ensure defaults if state is partial/corrupt
+                    if (!appState.excludeRules) appState.excludeRules = [];
+                    if (!appState.includeRules) appState.includeRules = [];
+                    
+                    // Apply the mode UI and render
+                    setMode(appState.mode || 'exclude');
+                }
+                break;
+
+            case 'update-rules':
+                // This comes from "Load Templates" (Exclude Mode only)
+                const { local, template } = message.rules;
+                
+                // Convert strings to objects
+                const newRules = [];
+                local.forEach(r => newRules.push({ value: r, checked: true }));
+                template.rules.forEach(r => newRules.push({ value: r, checked: true }));
+
+                // Update ONLY exclude state
+                appState.excludeRules = newRules;
+                appState.mode = 'exclude'; // Force exclude mode
+
+                loadTemplateBtn.textContent = 'Reload Rules';
+                loadTemplateBtn.disabled = false;
+
+                // Render
+                renderList();
+                saveStateToExtension();
+                break;
+        }
+    });
+
+    // --- HELPERS ---
+
+    function saveStateToExtension() {
+        vscode.postMessage({
+            type: 'save-state',
+            state: appState // We send the WHOLE state object
+        });
+    }
+
     function createRuleItem(ruleValue, isChecked) {
         const ruleItem = document.createElement('div');
         ruleItem.className = 'rule-item';
@@ -492,65 +645,13 @@ button:disabled {
         return ruleItem;
     }
 
-    function populateRulesList(state) {
-        rulesContainer.innerHTML = '';
-        let hasContent = false;
-
-        if (state.local && state.local.length > 0) {
-            hasContent = true;
-            const header = document.createElement('h4');
-            header.className = 'rules-category-header';
-            header.textContent = 'From .gitignore & Settings';
-            const listDiv = document.createElement('div');
-            listDiv.id = 'local-rules-list';
-            state.local.forEach(rule => listDiv.appendChild(createRuleItem(rule.value, rule.checked)));
-            rulesContainer.appendChild(header);
-            rulesContainer.appendChild(listDiv);
-        }
-        
-        if (state.template && state.template.rules.length > 0) {
-            hasContent = true;
-            const header = document.createElement('h4');
-            header.className = 'rules-category-header';
-            header.id = 'template-rules-header';
-            header.textContent = `From Template (${state.template.name})`;
-            header.dataset.templateName = state.template.name;
-            const listDiv = document.createElement('div');
-            listDiv.id = 'template-rules-list';
-            state.template.rules.forEach(rule => listDiv.appendChild(createRuleItem(rule.value, rule.checked)));
-            rulesContainer.appendChild(header);
-            rulesContainer.appendChild(listDiv);
-        }
-
-        if (state.custom && state.custom.length > 0) {
-            hasContent = true;
-            const header = document.createElement('h4');
-            header.className = 'rules-category-header';
-            header.textContent = 'Custom Rules';
-            const listDiv = document.createElement('div');
-            listDiv.id = 'custom-rules-list';
-            state.custom.forEach(rule => listDiv.appendChild(createRuleItem(rule.value, rule.checked)));
-            rulesContainer.appendChild(header);
-            rulesContainer.appendChild(listDiv);
-        }
-        
-        if (!hasContent) {
-            selectAllCb.checked = false;
-            return;
-        }
-
-        updateSelectAllState();
-    }
-
     function updateSelectAllState() {
         const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]');
-        if (checkboxes.length === 0) {
-            selectAllCb.checked = false;
-            return;
-        }
+        if (checkboxes.length === 0) return;
         const allChecked = Array.from(checkboxes).every(cb => cb.checked);
         selectAllCb.checked = allChecked;
     }
+
 }());
 
 --- package.json ---
@@ -714,6 +815,51 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { Ignore } from 'ignore';
 
+/**
+ * Simple heuristic to detect if a file is binary.
+ * 1. Checks extension.
+ * 2. Checks for null bytes in the first 4KB.
+ */
+function isBinaryFile(filePath: string): boolean {
+    // 1. Quick check based on extension
+    const binaryExtensions = [
+        '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp',
+        '.pdf', '.exe', '.dll', '.so', '.dylib', '.bin',
+        '.zip', '.tar', '.gz', '.7z', '.rar',
+        '.mp3', '.mp4', '.wav', '.avi', '.mov',
+        '.eot', '.ttf', '.woff', '.woff2',
+        '.pyc', '.class', '.jar'
+    ];
+    
+    if (binaryExtensions.includes(path.extname(filePath).toLowerCase())) {
+        return true;
+    }
+
+    // 2. Content check (Null Byte Heuristic)
+    try {
+        const buffer = Buffer.alloc(4096);
+        const fd = fs.openSync(filePath, 'r');
+        const bytesRead = fs.readSync(fd, buffer, 0, 4096, 0);
+        fs.closeSync(fd);
+
+        // Empty file is treated as text
+        if (bytesRead === 0) {
+            return false;
+        }
+
+        // Look for null byte (0x00) which usually indicates binary
+        for (let i = 0; i < bytesRead; i++) {
+            if (buffer[i] === 0) {
+                return true;
+            }
+        }
+        return false;
+    } catch (err) {
+        // If we can't read it, assume safe to skip or treat as binary to be safe
+        return false; 
+    }
+}
+
 export function generateProjectContextText(
     projectPath: string,
     outputFile: string,
@@ -738,20 +884,17 @@ export function generateProjectContextText(
                     const fullPath = path.join(dir, entry.name);
                     const relativePath = path.relative(projectPath, fullPath).replace(/\\/g, '/');
 
-                    // --- CORE FIX: Check directories with a trailing slash ---
                     if (entry.isDirectory()) {
-                        // For directories, test path with a trailing slash to match patterns like "node_modules/"
                         if (ig.ignores(relativePath + '/')) {
                             continue;
                         }
                         outputStream.write(`${indent}${entry.name}/\n`);
                         walkDir(fullPath, indent + "  ");
                     } else {
-                        // For files, test the path as is
                         if (ig.ignores(relativePath)) {
                             continue;
                         }
-                        // We no longer write file names here, that's handled by writeIncludedFileContents
+                        // File names are written in the structure section, content comes later
                     }
                 }
             }
@@ -768,7 +911,6 @@ export function generateProjectContextText(
                     const fullPath = path.join(dir, entry.name);
                     const relativePath = path.relative(projectPath, fullPath).replace(/\\/g, '/');
                     
-                    // --- CORE FIX: Also check directories with a trailing slash here ---
                     if (entry.isDirectory()) {
                         if (ig.ignores(relativePath + '/')) {
                             continue;
@@ -778,12 +920,21 @@ export function generateProjectContextText(
                         if (ig.ignores(relativePath)) {
                             continue;
                         }
+
                         outputStream.write(`\n--- ${relativePath} ---\n`);
+
+                        // --- FIX START: Check for binary files ---
+                        if (isBinaryFile(fullPath)) {
+                            outputStream.write("[Binary file detected - content excluded]\n");
+                            continue;
+                        }
+                        // --- FIX END ---
+
                         try {
                             const content = fs.readFileSync(fullPath, "utf8");
                             outputStream.write(content + "\n");
                         } catch (err) {
-                            // ... error handling
+                            outputStream.write(`[Error reading file: ${(err as Error).message}]\n`);
                         }
                     }
                 }
@@ -907,8 +1058,8 @@ export function activate(context: vscode.ExtensionContext) {
         };
     });
 
-    // COMMAND 2: Generates the context file (no changes needed here)
-    const generateCommand = vscode.commands.registerCommand('code-context-extractor.generate', async (args?: { selectedRules?: string[] }) => {
+    // COMMAND 2: Generates the context file
+    const generateCommand = vscode.commands.registerCommand('code-context-extractor.generate', async (args?: { selectedRules?: string[], mode?: 'include' | 'exclude' }) => {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
             vscode.window.showErrorMessage('No workspace folder is open.');
@@ -919,25 +1070,65 @@ export function activate(context: vscode.ExtensionContext) {
         
         const ig = ignore();
 
+        // ALWAYS exclude the output file itself to prevent infinite loops
         ig.add('ProjectContext.txt');
-        ig.add('.git/');
 
-        if (args?.selectedRules && args.selectedRules.length > 0) {
-            ig.add(args.selectedRules);
+        const mode = args?.mode || 'exclude';
+        const rules = args?.selectedRules || [];
+
+        if (mode === 'include') {
+            // --- INCLUDE MODE (WHITELIST) ---
+            // 1. Ignore everything by default
+            ig.add('*'); 
+            
+            // 2. Un-ignore (.gitignore syntax '!') the specific items selected
+            if (rules.length > 0) {
+                rules.forEach(rule => {
+                    // Clean rule: remove existing '!' if passed by mistake, though UI shouldn't send it
+                    const rawRule = rule.startsWith('!') ? rule.substring(1) : rule;
+                    
+                    // Un-ignore the item itself
+                    ig.add(`!${rawRule}`);
+
+                    // CRITICAL: If it's a folder (ends in /), we must also un-ignore its contents recursively
+                    // otherwise "src/" is unignored, but "src/main.ts" remains ignored by the global "*"
+                    if (rawRule.endsWith('/')) {
+                        ig.add(`!${rawRule}**`);
+                    }
+                });
+            } else {
+                const decision = await vscode.window.showWarningMessage(
+                    "Include Mode is active, but no files are selected. The generated file will be empty.",
+                    { modal: true },
+                    'Generate Anyway', 'Cancel'
+                );
+                if (decision !== 'Generate Anyway') {
+                    return;
+                }
+            }
+
         } else {
-            const decision = await vscode.window.showWarningMessage(
-                "No files/folders are selected for exclusion. This will include everything in your project (including node_modules, .git, etc). Do you want to continue?",
-                { modal: true },
-                'Yes, Continue'
-            );
-            if (decision !== 'Yes, Continue') {
-                return; 
+            // --- EXCLUDE MODE (BLACKLIST - Standard Behavior) ---
+            // Always exclude .git folder in standard mode
+            ig.add('.git/'); 
+
+            if (rules.length > 0) {
+                ig.add(rules);
+            } else {
+                const decision = await vscode.window.showWarningMessage(
+                    "No files/folders are selected for exclusion. This will include EVERYTHING (node_modules, etc). Do you want to continue?",
+                    { modal: true },
+                    'Yes, Continue'
+                );
+                if (decision !== 'Yes, Continue') {
+                    return; 
+                }
             }
         }
         
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
-            title: 'Generating Project Context',
+            title: `Generating Context (${mode === 'include' ? 'Whitelist' : 'Blacklist'})`,
             cancellable: false
         }, async (progress) => {
             progress.report({ message: 'Scanning files...' });
@@ -1081,7 +1272,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         switch (data.type) {
             case 'generate': {
                 vscode.commands.executeCommand('code-context-extractor.generate', {
-                    selectedRules: data.rules
+                    selectedRules: data.rules,
+                    mode: data.mode
                 });
                 break;
             }
@@ -1103,70 +1295,77 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
 
     private _getHtmlForWebview(webview: vscode.Webview) {
-    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'main.js'));
-    const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'main.css'));
-    const nonce = getNonce();
+        const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'main.js'));
+        const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'main.css'));
+        const nonce = getNonce();
 
-    return `<!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <link href="${styleUri}" rel="stylesheet">
-            <title>Code Context Extractor</title>
-        </head>
-        <body>
-            <h2>Code Context Extractor</h2>
-            <p class="description">
-                Create a single text file with your project's context, optimized for feeding into AI models.
-            </p>
-
-            <hr>
-
-            <h3>Step 1: Load Ignore Rules</h3>
-            <p class="description">
-                Load ignore rules from your project's .gitignore, VS Code settings, and optionally add rules from a standard template.
-            </p>
-            <button id="load-template-btn">Load / Refresh Ignore Rules</button>
-
-            <!-- This entire section is hidden until a template is loaded -->
-            <div id="refine-section" class="hidden">
-                <hr>
-                <h3>Step 2: Refine Files to Exclude</h3>
-                <p class="description">
-                    Uncheck any items you want to include in the context file. Add any other files or folders you wish to exclude.
-                </p>
-
-                <div id="select-all-container">
-                    <input type="checkbox" id="select-all-cb">
-                    <label for="select-all-cb">Select / Deselect All</label>
-                </div>
+        return `<!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <link href="${styleUri}" rel="stylesheet">
+                <title>Code Context Extractor</title>
+            </head>
+            <body>
+                <h2>Context Generator</h2>
                 
-                <div id="rules-container">
-                    <!-- Checkboxes will be dynamically inserted here -->
+                <!-- STEP 1: MODE SELECTION -->
+                <div class="toggle-container">
+                    <button id="btn-mode-exclude" class="toggle-btn active">Exclude Mode</button>
+                    <button id="btn-mode-include" class="toggle-btn">Include Mode</button>
                 </div>
 
-                <div id="add-rule-container">
-                    <input type="text" id="new-rule-input" placeholder="Add custom rule (e.g., *.log or temp/)"/>
-                    <button id="add-rule-btn">+</button>
-                </div>
-            </div>
-
-            <!-- This section is also hidden until a template is loaded -->
-            <div id="generate-section" class="hidden">
-                <hr>
-                <h3>Step 3: Generate the File</h3>
-                <p class="description">
-                    This will create a 'ProjectContext.txt' file in your workspace root.
+                <!-- DESCRIPTION AREA (Dynamic) -->
+                <p id="mode-description" class="description">
+                    <strong>Blacklist:</strong> Select files you want to <em>hide</em> from the AI.
                 </p>
-                <button id="generate-btn">Generate Context File</button>
-            </div>
 
-            <script nonce="${nonce}" src="${scriptUri}"></script>
-        </body>
-        </html>`;
-}
+                <hr>
+
+                <!-- EXCLUDE MODE SPECIFIC: Load Templates -->
+                <div id="exclude-controls">
+                    <h4 class="section-header">1. Load Ignore Rules</h4>
+                    <button id="load-template-btn">Load .gitignore & Templates</button>
+                </div>
+
+                <!-- INCLUDE MODE SPECIFIC: Manual Entry -->
+                <div id="include-controls" class="hidden">
+                    <h4 class="section-header">1. Add Files to Include</h4>
+                    <p class="description">Start empty. Add specific folders (e.g., <code>src/</code>) or files you strictly need.</p>
+                </div>
+
+                <!-- SHARED: Rule Management -->
+                <div id="rules-section" class="hidden">
+                    <h4 class="section-header" id="list-header">2. Manage List</h4>
+                    
+                    <!-- Add Rule Input (Always visible in Include mode, visible after load in Exclude mode) -->
+                    <div id="add-rule-container">
+                        <input type="text" id="new-rule-input" placeholder="e.g. src/ or *.ts"/>
+                        <button id="add-rule-btn">+</button>
+                    </div>
+
+                    <div id="select-all-container">
+                        <input type="checkbox" id="select-all-cb" checked>
+                        <label for="select-all-cb">Select / Deselect All</label>
+                    </div>
+                    
+                    <div id="rules-container">
+                        <!-- List items go here -->
+                    </div>
+                </div>
+
+                <!-- SHARED: Generate Button -->
+                <div id="generate-section">
+                    <hr>
+                    <button id="generate-btn">Generate Context File</button>
+                </div>
+
+                <script nonce="${nonce}" src="${scriptUri}"></script>
+            </body>
+            </html>`;
+    }
 }
 
 function getNonce() {

@@ -15,6 +15,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider)
     );
 
+    // COMMAND 1: Load Templates (Mostly for Exclude Mode)
     const loadTemplateCommand = vscode.commands.registerCommand('code-context-extractor.loadTemplateRules', async () => {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
@@ -27,6 +28,7 @@ export function activate(context: vscode.ExtensionContext) {
         const templateRules = new Set<string>();
         let templateName = '';
 
+        // Helper to parse line-by-line
         const addRulesToSet = (content: string, ruleSet: Set<string>) => {
             content.split(/\r?\n/).forEach(line => {
                 const trimmed = line.trim();
@@ -36,7 +38,7 @@ export function activate(context: vscode.ExtensionContext) {
             });
         };
 
-        // 1. Add rules from local .gitignore and settings
+        // 1. Add rules from local .gitignore and Settings
         const localGitignorePath = path.join(projectRoot, '.gitignore');
         if (fs.existsSync(localGitignorePath)) {
             const localGitignoreContent = fs.readFileSync(localGitignorePath, 'utf8');
@@ -45,10 +47,11 @@ export function activate(context: vscode.ExtensionContext) {
         const configuration = vscode.workspace.getConfiguration('code-context-extractor');
         const excludeDirs = configuration.get<string[]>('excludeDirs', []);
         const excludeFiles = configuration.get<string[]>('excludeFiles', []);
+        
         excludeDirs.map(dir => `${dir}/`).forEach(rule => localRules.add(rule));
         excludeFiles.forEach(rule => localRules.add(rule));
 
-        // 2. Ask user to select a template to add MORE rules
+        // 2. Ask user to select a GitHub template (Optional)
         const templates = await getAvailableTemplates();
         if (templates.length > 0) {
             const detected = await detectProjectTypes(projectRoot);
@@ -83,27 +86,28 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }
         
-        // --- CORE FIX: De-duplicate rules, giving priority to localRules ---
+        // De-duplicate: If a rule exists in local, don't show it as 'template'
         const finalTemplateRules = new Set<string>();
         templateRules.forEach(rule => {
             if (!localRules.has(rule)) {
                 finalTemplateRules.add(rule);
             }
         });
-        // --- END FIX ---
 
-        // Return a structured object with categorized rules
         return {
             local: Array.from(localRules).sort(),
             template: {
                 name: templateName,
-                rules: Array.from(finalTemplateRules).sort() // Use the de-duplicated set
+                rules: Array.from(finalTemplateRules).sort()
             }
         };
     });
 
-    // COMMAND 2: Generates the context file (no changes needed here)
-    const generateCommand = vscode.commands.registerCommand('code-context-extractor.generate', async (args?: { selectedRules?: string[] }) => {
+    /**
+     * COMMAND 2: Generate Context File
+     * Handles both 'exclude' (blacklist) and 'include' (whitelist) logic.
+     */
+    const generateCommand = vscode.commands.registerCommand('code-context-extractor.generate', async (args?: { selectedRules?: string[], mode?: 'include' | 'exclude' }) => {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
             vscode.window.showErrorMessage('No workspace folder is open.');
@@ -114,25 +118,52 @@ export function activate(context: vscode.ExtensionContext) {
         
         const ig = ignore();
 
+        // 1. Safety: Always exclude the output file itself
         ig.add('ProjectContext.txt');
-        ig.add('.git/');
 
-        if (args?.selectedRules && args.selectedRules.length > 0) {
-            ig.add(args.selectedRules);
+        const mode = args?.mode || 'exclude';
+        const rules = args?.selectedRules || [];
+
+        if (mode === 'include') {
+            // --- WHITELIST STRATEGY ---
+            // 1. Ignore everything (*)
+            ig.add('*'); 
+            
+            if (rules.length > 0) {
+                rules.forEach(rule => {
+                    const rawRule = rule.startsWith('!') ? rule.substring(1) : rule;
+                    
+                    // 2. Un-ignore (!) the specific item
+                    ig.add(`!${rawRule}`);
+
+                    // 3. If it's a folder, recursively un-ignore contents (**)
+                    if (rawRule.endsWith('/')) {
+                        ig.add(`!${rawRule}**`);
+                    }
+                });
+            } else {
+                vscode.window.showWarningMessage("Include Mode: No files selected. Output will be empty.");
+                return;
+            }
+
         } else {
-            const decision = await vscode.window.showWarningMessage(
-                "No files/folders are selected for exclusion. This will include everything in your project (including node_modules, .git, etc). Do you want to continue?",
-                { modal: true },
-                'Yes, Continue'
-            );
-            if (decision !== 'Yes, Continue') {
-                return; 
+            // --- BLACKLIST STRATEGY (Standard .gitignore) ---
+            ig.add('.git/'); // Always exclude .git metadata
+            
+            if (rules.length > 0) {
+                ig.add(rules);
+            } else {
+                const decision = await vscode.window.showWarningMessage(
+                    "Exclude Mode: No files selected. This will include EVERYTHING (including node_modules). Continue?",
+                    { modal: true }, 'Yes, Continue'
+                );
+                if (decision !== 'Yes, Continue') return; 
             }
         }
         
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
-            title: 'Generating Project Context',
+            title: `Generating Context (${mode === 'include' ? 'Whitelist' : 'Blacklist'})`,
             cancellable: false
         }, async (progress) => {
             progress.report({ message: 'Scanning files...' });

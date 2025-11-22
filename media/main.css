@@ -117,3 +117,78 @@ button:disabled {
     border-bottom: 1px solid var(--vscode-editor-widget-border);
     padding-bottom: 3px;
 }
+
+/* --- NEW STYLES FOR TOGGLE --- */
+/* .mode-toggle-container {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 15px;
+    background-color: var(--vscode-editor-inactiveSelectionBackground);
+    padding: 10px;
+    border-radius: 4px;
+}
+
+.mode-option {
+    display: flex;
+    align-items: flex-start;
+}
+
+.mode-option input {
+    margin-top: 3px;
+    margin-right: 8px;
+}
+
+.mode-option label {
+    cursor: pointer;
+} */
+
+/* --- SEGMENTED CONTROL (TOGGLE) --- */
+.toggle-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    /* background-color: var(--vscode-button-secondaryBackground); */
+    /* background-color: var(--vscode-disabledForeground); */
+    padding: 2px;
+    border-radius: 4px;
+    border-color: white;
+    margin-bottom: 20px;
+}
+
+.toggle-btn {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--vscode-button-secondaryForeground);
+    padding: 6px 12px;
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+    cursor: pointer;
+    border-radius: 2px;
+    transition: background-color 0.2s;
+    outline: none;
+}
+
+.toggle-btn:hover {
+    background-color: var(--vscode-button-secondaryHoverBackground);
+}
+
+.toggle-btn.active {
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    font-weight: 600;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+/* --- UTILS --- */
+.hidden {
+    display: none !important;
+}
+
+.section-header {
+    margin-top: 15px;
+    margin-bottom: 10px;
+    font-weight: bold;
+    opacity: 0.9;
+}

@@ -1,8 +1,8 @@
 {
   "name": "code-context-extractor",
   "displayName": "Code Context Extractor",
-  "description": "Used to extract code context into a txt file that can be used to feed AI ",
-  "version": "0.0.1",
+  "description": "Generates a single text file of your project context for LLMs. Supports both Whitelist and Blacklist modes with smart binary exclusion.",
+  "version": "0.0.2",
   "publisher": "ct-dev",
   "icon": "media/icon.png",
   "repository": {
@@ -14,7 +14,9 @@
     "vscode": "^1.105.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "Machine Learning",
+    "Programming Languages"
   ],
   "activationEvents": [
     "onCommand:code-context-extractor.generate",
@@ -45,7 +47,7 @@
             ".git",
             ".vscode"
           ],
-          "description": "List of directory names to exclude from the context file."
+          "description": "List of directory names to exclude by default in Exclude Mode."
         },
         "code-context-extractor.excludeFiles": {
           "type": "array",
@@ -55,9 +57,8 @@
           "default": [
             "package-lock.json"
           ],
-          "description": "List of specific file names to exclude from the context file."
+          "description": "List of specific file names to exclude by default in Exclude Mode."
         }
-        
       }
     },
     "viewsContainers": {

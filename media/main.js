@@ -2,167 +2,216 @@
 (function () {
     const vscode = acquireVsCodeApi();
 
-    // --- Tell the extension that the webview is ready to receive state ---
-    vscode.postMessage({ type: 'webview-ready' });
+    // --- INTERNAL STATE ---
+    let appState = {
+        mode: 'exclude', 
+        excludeRules: [], 
+        includeRules: []  
+    };
 
-    // --- Get references to all our UI elements ---
-    const loadTemplateBtn = document.getElementById('load-template-btn');
-    // --- Get references to all our UI elements ---
+    // --- UI REFERENCES ---
+    const btnExclude = document.getElementById('btn-mode-exclude');
+    const btnInclude = document.getElementById('btn-mode-include');
+    const modeDesc = document.getElementById('mode-description');
+    
+    const excludeControls = document.getElementById('exclude-controls');
+    const includeControls = document.getElementById('include-controls');
+    
+    const rulesSection = document.getElementById('rules-section');
+    const listHeader = document.getElementById('list-header');
     const rulesContainer = document.getElementById('rules-container');
     
-    // Section containers
-    const refineSection = document.getElementById('refine-section');
-    const generateSection = document.getElementById('generate-section');
-
-    // Interactive elements within the sections
-    const selectAllCb = document.getElementById('select-all-cb');
+    const loadTemplateBtn = document.getElementById('load-template-btn');
     const newRuleInput = document.getElementById('new-rule-input');
     const addRuleBtn = document.getElementById('add-rule-btn');
+    const selectAllCb = document.getElementById('select-all-cb');
     const generateBtn = document.getElementById('generate-btn');
-    // --- State Management ---
-    function getCurrentState() {
-        const state = {
-            local: [],
-            template: { name: '', rules: [] },
-            custom: [],
-            isVisible: !refineSection.classList.contains('hidden')
-        };
 
-        // Scrape rules from each category
-        document.querySelectorAll('#local-rules-list .rule-item').forEach(item => {
-            const checkbox = item.querySelector('input');
-            state.local.push({ value: checkbox.value, checked: checkbox.checked });
+    // --- INITIALIZATION ---
+    // Tell extension we are ready to receive data
+    vscode.postMessage({ type: 'webview-ready' });
+
+    // --- CORE LOGIC ---
+
+    function syncDomToState() {
+        const currentRules = [];
+        rulesContainer.querySelectorAll('.rule-item').forEach(item => {
+            const cb = item.querySelector('input');
+            currentRules.push({ value: cb.value, checked: cb.checked });
         });
-        const templateHeader = document.getElementById('template-rules-header');
-        if (templateHeader) {
-            state.template.name = templateHeader.dataset.templateName;
+
+        if (appState.mode === 'exclude') {
+            appState.excludeRules = currentRules;
+        } else {
+            appState.includeRules = currentRules;
         }
-        document.querySelectorAll('#template-rules-list .rule-item').forEach(item => {
-            const checkbox = item.querySelector('input');
-            state.template.rules.push({ value: checkbox.value, checked: checkbox.checked });
-        });
-        document.querySelectorAll('#custom-rules-list .rule-item').forEach(item => {
-            const checkbox = item.querySelector('input');
-            state.custom.push({ value: checkbox.value, checked: checkbox.checked });
-        });
-
-        return state;
     }
 
-    function saveState() {
-        vscode.postMessage({
-            type: 'save-state',
-            state: getCurrentState()
-        });
+    function renderList() {
+        rulesContainer.innerHTML = ''; 
+        
+        const rulesToRender = appState.mode === 'exclude' 
+            ? appState.excludeRules 
+            : appState.includeRules;
+
+        if (!rulesToRender || rulesToRender.length === 0) {
+            if (appState.mode === 'exclude') {
+                rulesSection.classList.add('hidden');
+            } else {
+                rulesSection.classList.remove('hidden');
+            }
+        } else {
+            rulesSection.classList.remove('hidden');
+            rulesToRender.forEach(rule => {
+                rulesContainer.appendChild(createRuleItem(rule.value, rule.checked));
+            });
+        }
+        
+        // Update checkboxes and button state
+        updateSelectAllState();
+        updateGenerateButtonState();
     }
 
-    // --- Handle messages FROM the extension ---
-    window.addEventListener('message', event => {
-        const message = event.data;
-        switch (message.type) {
-            case 'update-rules': {
-                const { local, template } = message.rules;
-                const state = {
-                    local: local.map(r => ({ value: r, checked: true })),
-                    template: {
-                        name: template.name,
-                        rules: template.rules.map(r => ({ value: r, checked: true }))
-                    },
-                    custom: [] // Start with no custom rules on a fresh load
-                };
-                populateRulesList(state);
-                if (state.local.length > 0 || state.template.rules.length > 0) {
-                    refineSection.classList.remove('hidden');
-                    generateSection.classList.remove('hidden');
-                } else {
-                    refineSection.classList.add('hidden');
-                    generateSection.classList.add('hidden');
-                }
-                loadTemplateBtn.disabled = false;
-                loadTemplateBtn.textContent = 'Load / Refresh Ignore Rules';
-                saveState();
-                break;
-            }
-            case 'restore-state': {
-                const state = message.state;
-                if (state) {
-                    populateRulesList(state);
-                    if (state.isVisible) {
-                        refineSection.classList.remove('hidden');
-                        generateSection.classList.remove('hidden');
-                    } else {
-                        refineSection.classList.add('hidden');
-                        generateSection.classList.add('hidden');
-                    }
-                }
-                break;
-            }
+    function updateUiForMode(mode) {
+        if (mode === 'exclude') {
+            btnExclude.classList.add('active');
+            btnInclude.classList.remove('active');
+            modeDesc.innerHTML = `<strong>Blacklist:</strong> Everything is included by default. Check items below to <em>exclude</em> them.`;
+            excludeControls.classList.remove('hidden');
+            includeControls.classList.add('hidden');
+            listHeader.textContent = "2. Refine Exclusions";
+        } else {
+            btnInclude.classList.add('active');
+            btnExclude.classList.remove('active');
+            modeDesc.innerHTML = `<strong>Whitelist:</strong> Everything is ignored by default. Add items below to <em>include</em> them.`;
+            excludeControls.classList.add('hidden');
+            includeControls.classList.remove('hidden');
+            listHeader.textContent = "2. Whitelist Files";
         }
-    });
+    }
 
-    // --- Event Listeners ---
+    function handleModeSwitch(newMode) {
+        if (appState.mode === newMode) return;
+
+        syncDomToState();
+        appState.mode = newMode;
+        updateUiForMode(newMode);
+        renderList();
+        saveStateToExtension();
+    }
+
+    // --- EVENT LISTENERS ---
+    btnExclude.addEventListener('click', () => handleModeSwitch('exclude'));
+    btnInclude.addEventListener('click', () => handleModeSwitch('include'));
+
     loadTemplateBtn.addEventListener('click', () => {
         loadTemplateBtn.disabled = true;
-        loadTemplateBtn.textContent = 'Loading templates...';
+        loadTemplateBtn.textContent = 'Loading...';
         vscode.postMessage({ type: 'load-template' });
-    });
-
-    generateBtn.addEventListener('click', () => {
-        const selectedRules = [];
-        const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]:checked');
-        checkboxes.forEach(cb => selectedRules.push(cb.value));
-        vscode.postMessage({ type: 'generate', rules: selectedRules });
     });
 
     function addNewRule() {
         let newRule = newRuleInput.value.trim();
-        if (newRule) {
-            if (newRule.startsWith('.') && !newRule.includes('*') && !newRule.includes('/')) {
-                newRule = '*' + newRule;
-            }
-            if (!document.getElementById(newRule)) {
-                const ruleItem = createRuleItem(newRule, true);
-                let customList = document.getElementById('custom-rules-list');
-                if (!customList) {
-                    const header = document.createElement('h4');
-                    header.className = 'rules-category-header';
-                    header.textContent = 'Custom Rules';
-                    rulesContainer.appendChild(header);
-                    customList = document.createElement('div');
-                    customList.id = 'custom-rules-list';
-                    rulesContainer.appendChild(customList);
-                }
-                customList.appendChild(ruleItem);
-                newRuleInput.value = '';
-                updateSelectAllState();
-                saveState();
-            } else {
-                newRuleInput.value = '';
-            }
+        if (!newRule) return;
+
+        if (newRule.startsWith('.') && !newRule.includes('*') && !newRule.includes('/')) {
+            newRule = '*' + newRule;
+        }
+
+        if (!document.getElementById(newRule)) {
+            const ruleItem = createRuleItem(newRule, true); // Checked by default
+            rulesContainer.prepend(ruleItem);
+            rulesSection.classList.remove('hidden');
+            newRuleInput.value = '';
+            
+            updateSelectAllState();
+            updateGenerateButtonState();
+            
+            syncDomToState();
+            saveStateToExtension();
         }
     }
 
     addRuleBtn.addEventListener('click', addNewRule);
-    newRuleInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-            addNewRule();
-        }
-    });
+    newRuleInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') addNewRule(); });
 
-    selectAllCb.addEventListener('change', (e) => {
-        const isChecked = e.target.checked;
-        rulesContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = isChecked);
-        saveState();
-    });
-
+    // Individual checkbox change
     rulesContainer.addEventListener('change', (e) => {
         if (e.target.matches('input[type="checkbox"]')) {
             updateSelectAllState();
-            saveState();
+            updateGenerateButtonState(); // Check if button should be disabled
+            syncDomToState();
+            saveStateToExtension();
         }
     });
 
-    // --- Helper Functions ---
+    // Select All change
+    selectAllCb.addEventListener('change', (e) => {
+        const isChecked = e.target.checked;
+        rulesContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = isChecked);
+        
+        updateGenerateButtonState(); // Check if button should be disabled
+        syncDomToState();
+        saveStateToExtension();
+    });
+
+    generateBtn.addEventListener('click', () => {
+        syncDomToState(); 
+        const activeRules = appState.mode === 'exclude' ? appState.excludeRules : appState.includeRules;
+        const selectedRules = activeRules.filter(r => r.checked).map(r => r.value);
+
+        vscode.postMessage({ 
+            type: 'generate', 
+            rules: selectedRules,
+            mode: appState.mode
+        });
+    });
+
+    // --- MESSAGE HANDLING ---
+    window.addEventListener('message', event => {
+        const message = event.data;
+
+        switch (message.type) {
+            case 'restore-state':
+                if (message.state) {
+                    appState = message.state;
+                    
+                    if (!appState.excludeRules) appState.excludeRules = [];
+                    if (!appState.includeRules) appState.includeRules = [];
+                    if (!appState.mode) appState.mode = 'exclude';
+
+                    updateUiForMode(appState.mode);
+                    renderList();
+                }
+                break;
+
+            case 'update-rules':
+                // From Load Templates
+                const { local, template } = message.rules;
+                const newRules = [];
+                local.forEach(r => newRules.push({ value: r, checked: true }));
+                template.rules.forEach(r => newRules.push({ value: r, checked: true }));
+
+                appState.excludeRules = newRules;
+                appState.mode = 'exclude';
+
+                loadTemplateBtn.textContent = 'Reload Rules';
+                loadTemplateBtn.disabled = false;
+
+                updateUiForMode('exclude');
+                renderList();
+                saveStateToExtension();
+                break;
+        }
+    });
+
+    function saveStateToExtension() {
+        vscode.postMessage({
+            type: 'save-state',
+            state: appState 
+        });
+    }
+
     function createRuleItem(ruleValue, isChecked) {
         const ruleItem = document.createElement('div');
         ruleItem.className = 'rule-item';
@@ -179,63 +228,24 @@
         return ruleItem;
     }
 
-    function populateRulesList(state) {
-        rulesContainer.innerHTML = '';
-        let hasContent = false;
-
-        if (state.local && state.local.length > 0) {
-            hasContent = true;
-            const header = document.createElement('h4');
-            header.className = 'rules-category-header';
-            header.textContent = 'From .gitignore & Settings';
-            const listDiv = document.createElement('div');
-            listDiv.id = 'local-rules-list';
-            state.local.forEach(rule => listDiv.appendChild(createRuleItem(rule.value, rule.checked)));
-            rulesContainer.appendChild(header);
-            rulesContainer.appendChild(listDiv);
-        }
-        
-        if (state.template && state.template.rules.length > 0) {
-            hasContent = true;
-            const header = document.createElement('h4');
-            header.className = 'rules-category-header';
-            header.id = 'template-rules-header';
-            header.textContent = `From Template (${state.template.name})`;
-            header.dataset.templateName = state.template.name;
-            const listDiv = document.createElement('div');
-            listDiv.id = 'template-rules-list';
-            state.template.rules.forEach(rule => listDiv.appendChild(createRuleItem(rule.value, rule.checked)));
-            rulesContainer.appendChild(header);
-            rulesContainer.appendChild(listDiv);
-        }
-
-        if (state.custom && state.custom.length > 0) {
-            hasContent = true;
-            const header = document.createElement('h4');
-            header.className = 'rules-category-header';
-            header.textContent = 'Custom Rules';
-            const listDiv = document.createElement('div');
-            listDiv.id = 'custom-rules-list';
-            state.custom.forEach(rule => listDiv.appendChild(createRuleItem(rule.value, rule.checked)));
-            rulesContainer.appendChild(header);
-            rulesContainer.appendChild(listDiv);
-        }
-        
-        if (!hasContent) {
-            selectAllCb.checked = false;
-            return;
-        }
-
-        updateSelectAllState();
-    }
-
     function updateSelectAllState() {
         const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]');
-        if (checkboxes.length === 0) {
-            selectAllCb.checked = false;
-            return;
-        }
+        if (checkboxes.length === 0) return;
         const allChecked = Array.from(checkboxes).every(cb => cb.checked);
         selectAllCb.checked = allChecked;
+    }
+
+    // --- NEW HELPER FOR BUTTON STATE ---
+    function updateGenerateButtonState() {
+        const checkedBoxes = rulesContainer.querySelectorAll('input[type="checkbox"]:checked');
+        const count = checkedBoxes.length;
+
+        if (count === 0) {
+            generateBtn.disabled = true;
+            generateBtn.title = "Please select at least one item to generate";
+        } else {
+            generateBtn.disabled = false;
+            generateBtn.title = "";
+        }
     }
 }());
