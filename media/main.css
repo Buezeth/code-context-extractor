@@ -24,14 +24,47 @@ button:hover {
     overflow-y: auto;
 }
 
+/* --- RULE ITEMS & DELETE BUTTON --- */
 .rule-item {
     display: flex;
     align-items: center;
-    padding: 2px 0;
+    padding: 4px 0;
+    /* Ensure label takes available space to push delete btn to right */
+    justify-content: space-between; 
 }
 
 .rule-item input {
     margin-right: 8px;
+}
+
+.rule-item label {
+    flex-grow: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+
+/* Delete Button Styling */
+.delete-btn {
+    background: transparent;
+    border: none;
+    color: var(--vscode-description-foreground);
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: bold;
+    line-height: 1;
+    padding: 0 6px;
+    margin: 0; /* Override global button margin */
+    width: auto; /* Override global button width */
+    opacity: 0.6;
+    transition: opacity 0.2s, color 0.2s;
+}
+
+.delete-btn:hover {
+    opacity: 1;
+    color: var(--vscode-errorForeground); /* Standard VS Code Red */
+    background: transparent; /* Override global hover */
 }
 
 .hidden {
@@ -191,4 +224,61 @@ button:disabled {
     margin-bottom: 10px;
     font-weight: bold;
     opacity: 0.9;
+}
+
+/* --- CATEGORY DROPDOWNS (ACCORDION) --- */
+.category-group {
+    margin-bottom: 5px;
+    border: 1px solid var(--vscode-editor-widget-border);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.category-header {
+    display: flex;
+    align-items: center;
+    background-color: var(--vscode-sideBarSectionHeader-background);
+    padding: 4px 8px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.category-toggle-icon {
+    margin-right: 6px;
+    font-size: 10px;
+    transition: transform 0.2s;
+    /* Unicode arrow usually works, or use codicons if available */
+    content: '▶'; 
+    display: inline-block;
+}
+
+.category-group.expanded .category-toggle-icon {
+    transform: rotate(90deg);
+}
+
+.category-title {
+    flex-grow: 1;
+    font-weight: bold;
+    font-size: 0.9em;
+}
+
+/* Specific Select All checkbox for the group */
+.category-checkbox {
+    margin-left: 8px;
+    cursor: pointer;
+}
+
+.category-content {
+    display: none;
+    padding: 5px 0 5px 10px; /* Indent content */
+    background-color: var(--vscode-editor-background);
+}
+
+.category-group.expanded .category-content {
+    display: block;
+}
+
+/* Hide the global select all in Exclude mode, since we have per-group controls now */
+.global-select-all-hidden {
+    display: none;
 }
