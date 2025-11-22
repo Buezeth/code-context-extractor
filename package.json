@@ -2,7 +2,7 @@
   "name": "code-context-extractor",
   "displayName": "Code Context Extractor",
   "description": "Generates a single text file of your project context for LLMs. Supports both Whitelist and Blacklist modes with smart binary exclusion.",
-  "version": "0.0.2",
+  "version": "1.0.0",
   "publisher": "ct-dev",
   "icon": "media/icon.png",
   "repository": {
@@ -20,7 +20,7 @@
   ],
   "activationEvents": [
     "onCommand:code-context-extractor.generate",
-    "onView:code-context-extractor-view" 
+    "onView:code-context-extractor-view"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -71,15 +71,15 @@
       ]
     },
     "views": {
-    "code-context-extractor-sidebar": [
-      {
-        "id": "code-context-extractor-view",
-        "name": "Generator",
-        "type": "webview",
-        "icon": "media/icon.svg"
-      }
-    ]
-  }
+      "code-context-extractor-sidebar": [
+        {
+          "id": "code-context-extractor-view",
+          "name": "Generator",
+          "type": "webview",
+          "icon": "media/icon.svg"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
