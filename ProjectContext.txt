@@ -163,6 +163,9 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+--- media/icon.png ---
+[Binary file detected - content excluded]
+
 --- media/icon.svg ---
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
 
@@ -216,14 +219,47 @@ button:hover {
     overflow-y: auto;
 }
 
+/* --- RULE ITEMS & DELETE BUTTON --- */
 .rule-item {
     display: flex;
     align-items: center;
-    padding: 2px 0;
+    padding: 4px 0;
+    /* Ensure label takes available space to push delete btn to right */
+    justify-content: space-between; 
 }
 
 .rule-item input {
     margin-right: 8px;
+}
+
+.rule-item label {
+    flex-grow: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+
+/* Delete Button Styling */
+.delete-btn {
+    background: transparent;
+    border: none;
+    color: var(--vscode-description-foreground);
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: bold;
+    line-height: 1;
+    padding: 0 6px;
+    margin: 0; /* Override global button margin */
+    width: auto; /* Override global button width */
+    opacity: 0.6;
+    transition: opacity 0.2s, color 0.2s;
+}
+
+.delete-btn:hover {
+    opacity: 1;
+    color: var(--vscode-errorForeground); /* Standard VS Code Red */
+    background: transparent; /* Override global hover */
 }
 
 .hidden {
@@ -385,17 +421,74 @@ button:disabled {
     opacity: 0.9;
 }
 
+/* --- CATEGORY DROPDOWNS (ACCORDION) --- */
+.category-group {
+    margin-bottom: 5px;
+    border: 1px solid var(--vscode-editor-widget-border);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.category-header {
+    display: flex;
+    align-items: center;
+    background-color: var(--vscode-sideBarSectionHeader-background);
+    padding: 4px 8px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.category-toggle-icon {
+    margin-right: 6px;
+    font-size: 10px;
+    transition: transform 0.2s;
+    /* Unicode arrow usually works, or use codicons if available */
+    content: '▶'; 
+    display: inline-block;
+}
+
+.category-group.expanded .category-toggle-icon {
+    transform: rotate(90deg);
+}
+
+.category-title {
+    flex-grow: 1;
+    font-weight: bold;
+    font-size: 0.9em;
+}
+
+/* Specific Select All checkbox for the group */
+.category-checkbox {
+    margin-left: 8px;
+    cursor: pointer;
+}
+
+.category-content {
+    display: none;
+    padding: 5px 0 5px 10px; /* Indent content */
+    background-color: var(--vscode-editor-background);
+}
+
+.category-group.expanded .category-content {
+    display: block;
+}
+
+/* Hide the global select all in Exclude mode, since we have per-group controls now */
+.global-select-all-hidden {
+    display: none;
+}
+
 --- media/main.js ---
 // media/main.js
 (function () {
     const vscode = acquireVsCodeApi();
 
     // --- INTERNAL STATE ---
-    // We keep both lists in memory so switching doesn't lose data
     let appState = {
-        mode: 'exclude', // 'exclude' | 'include'
-        excludeRules: [], // Array of { value: string, checked: boolean }
-        includeRules: []  // Array of { value: string, checked: boolean }
+        mode: 'exclude', 
+        // Rules now look like: { value: 'node_modules', checked: true, category: 'imported' | 'custom' }
+        excludeRules: [], 
+        includeRules: []  
     };
 
     // --- UI REFERENCES ---
@@ -409,6 +502,7 @@ button:disabled {
     const rulesSection = document.getElementById('rules-section');
     const listHeader = document.getElementById('list-header');
     const rulesContainer = document.getElementById('rules-container');
+    const selectAllContainer = document.getElementById('select-all-container'); // Global select all
     
     const loadTemplateBtn = document.getElementById('load-template-btn');
     const newRuleInput = document.getElementById('new-rule-input');
@@ -422,63 +516,219 @@ button:disabled {
     // --- CORE LOGIC ---
 
     /**
-     * Syncs the DOM (what the user sees) back to our appState variable.
-     * Should be called before switching modes or saving.
+     * Scrapes DOM to update State.
+     * Logic differs for Exclude (Grouped) vs Include (Flat).
      */
     function syncDomToState() {
-        const currentRules = [];
-        rulesContainer.querySelectorAll('.rule-item').forEach(item => {
-            const cb = item.querySelector('input');
-            currentRules.push({ value: cb.value, checked: cb.checked });
-        });
-
-        if (appState.mode === 'exclude') {
-            appState.excludeRules = currentRules;
-        } else {
+        if (appState.mode === 'include') {
+            // Include mode is still a flat list
+            const currentRules = [];
+            rulesContainer.querySelectorAll('.rule-item').forEach(item => {
+                const cb = item.querySelector('.rule-cb');
+                currentRules.push({ value: cb.value, checked: cb.checked, category: 'custom' });
+            });
             appState.includeRules = currentRules;
+        } else {
+            // Exclude mode is grouped. We need to preserve the category.
+            const currentRules = [];
+            // We can grab all inputs, their category is stored in a data attribute on the item
+            rulesContainer.querySelectorAll('.rule-item').forEach(item => {
+                const cb = item.querySelector('.rule-cb');
+                const category = item.dataset.category || 'custom';
+                currentRules.push({ value: cb.value, checked: cb.checked, category: category });
+            });
+            appState.excludeRules = currentRules;
         }
     }
 
     /**
-     * Renders the list based on the current appState.mode
+     * Renders the list. 
+     * If Exclude Mode -> Renders 2 Accordions (Imported, Custom).
+     * If Include Mode -> Renders Flat List.
      */
     function renderList() {
-        rulesContainer.innerHTML = ''; // Clear current view
+        rulesContainer.innerHTML = ''; 
         
-        const rulesToRender = appState.mode === 'exclude' 
-            ? appState.excludeRules 
-            : appState.includeRules;
-
-        if (rulesToRender.length === 0) {
-            // If exclude mode is empty, hide the section (until loaded).
-            // If include mode is empty, show it (so they can add).
-            if (appState.mode === 'exclude') {
-                rulesSection.classList.add('hidden');
-            } else {
+        if (appState.mode === 'include') {
+            // --- INCLUDE MODE (FLAT) ---
+            selectAllContainer.classList.remove('global-select-all-hidden'); // Show global select all
+            
+            if (appState.includeRules.length > 0) {
                 rulesSection.classList.remove('hidden');
+                appState.includeRules.forEach(rule => {
+                    rulesContainer.appendChild(createRuleItem(rule.value, rule.checked, 'custom'));
+                });
+            } else {
+                rulesSection.classList.remove('hidden'); // Keep visible so they can add
             }
-        } else {
-            rulesSection.classList.remove('hidden');
-            rulesToRender.forEach(rule => {
-                rulesContainer.appendChild(createRuleItem(rule.value, rule.checked));
-            });
-        }
 
-        updateSelectAllState();
+        } else {
+            // --- EXCLUDE MODE (GROUPED) ---
+            selectAllContainer.classList.add('global-select-all-hidden'); // Hide global select all, use group ones
+
+            const importedRules = appState.excludeRules.filter(r => r.category === 'imported');
+            const customRules = appState.excludeRules.filter(r => r.category !== 'imported'); // Default to custom
+
+            let hasContent = false;
+
+            if (importedRules.length > 0) {
+                const group = createCategoryGroup('Imported Rules (.gitignore/Template)', importedRules);
+                rulesContainer.appendChild(group);
+                hasContent = true;
+            }
+
+            if (customRules.length > 0) {
+                const group = createCategoryGroup('Custom Rules', customRules);
+                rulesContainer.appendChild(group);
+                hasContent = true;
+            }
+
+            // Only show section if we have data or if we want to allow adding
+            if (hasContent || customRules.length === 0) {
+                 // Even if empty, show section so user can add custom rules
+                rulesSection.classList.remove('hidden');
+            } else {
+                rulesSection.classList.add('hidden');
+            }
+        }
+        
+        updateGenerateButtonState();
+        // Update global select all for Include mode
+        if (appState.mode === 'include') updateGlobalSelectAllState();
     }
 
     /**
-     * Switches the UI mode and updates state
+     * Creates a collapsible accordion DOM element
      */
-    function setMode(newMode) {
-        // 1. Save what's currently on screen before switching
+    function createCategoryGroup(title, rules) {
+        const groupDiv = document.createElement('div');
+        groupDiv.className = 'category-group expanded'; // Default expanded
+
+        // HEADER
+        const header = document.createElement('div');
+        header.className = 'category-header';
+        
+        // Collapse Icon
+        const icon = document.createElement('span');
+        icon.className = 'category-toggle-icon';
+        icon.textContent = '▶'; 
+        
+        // Title
+        const titleSpan = document.createElement('span');
+        titleSpan.className = 'category-title';
+        titleSpan.textContent = title;
+
+        // Group Select All
+        const groupCb = document.createElement('input');
+        groupCb.type = 'checkbox';
+        groupCb.className = 'category-checkbox';
+        groupCb.title = 'Select/Deselect All in Group';
+        
+        // Logic for initial Group Checkbox state
+        const allChecked = rules.every(r => r.checked);
+        const someChecked = rules.some(r => r.checked);
+        groupCb.checked = allChecked;
+        groupCb.indeterminate = someChecked && !allChecked;
+
+        // EVENT: Toggle Collapse
+        header.addEventListener('click', (e) => {
+            if (e.target !== groupCb) {
+                groupDiv.classList.toggle('expanded');
+            }
+        });
+
+        // EVENT: Group Select All
+        groupCb.addEventListener('change', (e) => {
+            const isChecked = e.target.checked;
+            const contentDiv = groupDiv.querySelector('.category-content');
+            contentDiv.querySelectorAll('.rule-cb').forEach(cb => {
+                cb.checked = isChecked;
+            });
+            syncDomToState();
+            saveStateToExtension();
+            updateGenerateButtonState();
+        });
+
+        header.appendChild(icon);
+        header.appendChild(titleSpan);
+        header.appendChild(groupCb);
+
+        // CONTENT
+        const content = document.createElement('div');
+        content.className = 'category-content';
+        
+        rules.forEach(rule => {
+            content.appendChild(createRuleItem(rule.value, rule.checked, rule.category));
+        });
+
+        groupDiv.appendChild(header);
+        groupDiv.appendChild(content);
+
+        return groupDiv;
+    }
+
+    // --- NEW: Delete Logic ---
+    function deleteRule(valueToDelete) {
+        // 1. Sync current checkbox states so we don't lose checkmarks on other items
         syncDomToState();
 
-        // 2. Update internal mode
-        appState.mode = newMode;
+        // 2. Filter out the item
+        if (appState.mode === 'include') {
+            appState.includeRules = appState.includeRules.filter(r => r.value !== valueToDelete);
+        } else {
+            appState.excludeRules = appState.excludeRules.filter(r => r.value !== valueToDelete);
+        }
 
-        // 3. Update UI Classes
-        if (newMode === 'exclude') {
+        // 3. Re-render
+        renderList();
+        saveStateToExtension();
+    }
+
+    // --- UPDATED: Create Rule Item ---
+    function createRuleItem(ruleValue, isChecked, category) {
+        const ruleItem = document.createElement('div');
+        ruleItem.className = 'rule-item';
+        ruleItem.dataset.category = category;
+
+        // 1. Checkbox
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'rule-cb';
+        checkbox.id = ruleValue;
+        checkbox.value = ruleValue;
+        checkbox.checked = isChecked;
+        
+        // 2. Label
+        const label = document.createElement('label');
+        label.htmlFor = ruleValue;
+        label.textContent = ruleValue;
+        label.title = ruleValue; // Tooltip for long paths
+
+        ruleItem.appendChild(checkbox);
+        ruleItem.appendChild(label);
+
+        // 3. Delete Button (Condition: Include Mode OR Custom Category)
+        if (appState.mode === 'include' || category === 'custom') {
+            const delBtn = document.createElement('button');
+            delBtn.className = 'delete-btn';
+            delBtn.innerHTML = '&times;'; // The "X" symbol
+            delBtn.title = 'Remove this rule';
+            
+            delBtn.addEventListener('click', (e) => {
+                e.preventDefault(); // Prevent triggering label click
+                deleteRule(ruleValue);
+            });
+
+            ruleItem.appendChild(delBtn);
+        }
+
+        return ruleItem;
+    }
+
+    // --- UI HELPERS ---
+
+    function updateUiForMode(mode) {
+        if (mode === 'exclude') {
             btnExclude.classList.add('active');
             btnInclude.classList.remove('active');
             modeDesc.innerHTML = `<strong>Blacklist:</strong> Everything is included by default. Check items below to <em>exclude</em> them.`;
@@ -493,18 +743,51 @@ button:disabled {
             includeControls.classList.remove('hidden');
             listHeader.textContent = "2. Whitelist Files";
         }
+    }
 
-        // 4. Re-render list for the new mode
+    // --- ACTIONS ---
+
+    function handleModeSwitch(newMode) {
+        if (appState.mode === newMode) return;
+        syncDomToState();
+        appState.mode = newMode;
+        updateUiForMode(newMode);
         renderList();
-        
-        // 5. Persist
         saveStateToExtension();
     }
 
-    // --- EVENT LISTENERS ---
+    function addNewRule() {
+        let newRule = newRuleInput.value.trim();
+        if (!newRule) return;
 
-    btnExclude.addEventListener('click', () => setMode('exclude'));
-    btnInclude.addEventListener('click', () => setMode('include'));
+        // Auto format
+        if (newRule.startsWith('.') && !newRule.includes('*') && !newRule.includes('/')) {
+            newRule = '*' + newRule;
+        }
+
+        // Logic split for Adding
+        if (appState.mode === 'include') {
+            // Include mode (Flat)
+            if (!appState.includeRules.find(r => r.value === newRule)) {
+                appState.includeRules.unshift({ value: newRule, checked: true, category: 'custom' });
+                renderList();
+                saveStateToExtension();
+            }
+        } else {
+            // Exclude mode (Grouped) - Add to Custom
+            if (!appState.excludeRules.find(r => r.value === newRule)) {
+                appState.excludeRules.unshift({ value: newRule, checked: true, category: 'custom' });
+                renderList();
+                saveStateToExtension();
+            }
+        }
+        newRuleInput.value = '';
+    }
+
+    // --- EVENTS ---
+
+    btnExclude.addEventListener('click', () => handleModeSwitch('exclude'));
+    btnInclude.addEventListener('click', () => handleModeSwitch('include'));
 
     loadTemplateBtn.addEventListener('click', () => {
         loadTemplateBtn.disabled = true;
@@ -512,63 +795,44 @@ button:disabled {
         vscode.postMessage({ type: 'load-template' });
     });
 
-    function addNewRule() {
-        let newRule = newRuleInput.value.trim();
-        if (!newRule) return;
-
-        // Format rule
-        if (newRule.startsWith('.') && !newRule.includes('*') && !newRule.includes('/')) {
-            newRule = '*' + newRule;
-        }
-
-        // Check for duplicates in the current DOM
-        if (!document.getElementById(newRule)) {
-            const ruleItem = createRuleItem(newRule, true);
-            // Add to top
-            rulesContainer.prepend(ruleItem);
-            
-            // Reveal section if it was hidden
-            rulesSection.classList.remove('hidden');
-            
-            newRuleInput.value = '';
-            updateSelectAllState();
-            
-            // Save immediately
-            syncDomToState();
-            saveStateToExtension();
-        }
-    }
-
     addRuleBtn.addEventListener('click', addNewRule);
     newRuleInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') addNewRule(); });
 
-    // Checkbox changes
+    // Listener for individual Rule Checkboxes
     rulesContainer.addEventListener('change', (e) => {
-        if (e.target.matches('input[type="checkbox"]')) {
-            updateSelectAllState();
+        if (e.target.classList.contains('rule-cb')) {
+            
+            // If inside a group, update that group's select all checkbox
+            const groupDiv = e.target.closest('.category-group');
+            if (groupDiv) {
+                const groupCb = groupDiv.querySelector('.category-checkbox');
+                const allCbs = groupDiv.querySelectorAll('.rule-cb');
+                const allChecked = Array.from(allCbs).every(cb => cb.checked);
+                const someChecked = Array.from(allCbs).some(cb => cb.checked);
+                groupCb.checked = allChecked;
+                groupCb.indeterminate = someChecked && !allChecked;
+            }
+
+            updateGenerateButtonState();
+            if (appState.mode === 'include') updateGlobalSelectAllState();
             syncDomToState();
             saveStateToExtension();
         }
     });
 
-    // Select All changes
+    // Global Select All (Only used for Include Mode now)
     selectAllCb.addEventListener('change', (e) => {
         const isChecked = e.target.checked;
-        rulesContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = isChecked);
+        rulesContainer.querySelectorAll('.rule-cb').forEach(cb => cb.checked = isChecked);
+        updateGenerateButtonState();
         syncDomToState();
         saveStateToExtension();
     });
 
     generateBtn.addEventListener('click', () => {
-        // Make sure we have the latest data
         syncDomToState(); 
-
         const activeRules = appState.mode === 'exclude' ? appState.excludeRules : appState.includeRules;
-        
-        // Only send checked items
-        const selectedRules = activeRules
-            .filter(r => r.checked)
-            .map(r => r.value);
+        const selectedRules = activeRules.filter(r => r.checked).map(r => r.value);
 
         vscode.postMessage({ 
             type: 'generate', 
@@ -577,79 +841,70 @@ button:disabled {
         });
     });
 
-    // --- MESSAGE HANDLING ---
+    // --- MESSAGES ---
 
     window.addEventListener('message', event => {
         const message = event.data;
-
         switch (message.type) {
             case 'restore-state':
                 if (message.state) {
-                    // Restore the full state object
                     appState = message.state;
-                    
-                    // Ensure defaults if state is partial/corrupt
+                    // Defaults
                     if (!appState.excludeRules) appState.excludeRules = [];
                     if (!appState.includeRules) appState.includeRules = [];
+                    if (!appState.mode) appState.mode = 'exclude';
                     
-                    // Apply the mode UI and render
-                    setMode(appState.mode || 'exclude');
+                    updateUiForMode(appState.mode);
+                    renderList();
                 }
                 break;
 
             case 'update-rules':
-                // This comes from "Load Templates" (Exclude Mode only)
+                // Loading templates (Exclude Mode)
                 const { local, template } = message.rules;
-                
-                // Convert strings to objects
                 const newRules = [];
-                local.forEach(r => newRules.push({ value: r, checked: true }));
-                template.rules.forEach(r => newRules.push({ value: r, checked: true }));
-
-                // Update ONLY exclude state
-                appState.excludeRules = newRules;
-                appState.mode = 'exclude'; // Force exclude mode
-
+                
+                // Tag them as 'imported'
+                local.forEach(r => newRules.push({ value: r, checked: true, category: 'imported' }));
+                template.rules.forEach(r => newRules.push({ value: r, checked: true, category: 'imported' }));
+                
+                // Preserve existing custom rules? 
+                // Currently we overwrite imported, but we should probably keep custom rules user added
+                const existingCustom = appState.excludeRules.filter(r => r.category === 'custom');
+                appState.excludeRules = [...newRules, ...existingCustom];
+                
+                appState.mode = 'exclude';
                 loadTemplateBtn.textContent = 'Reload Rules';
                 loadTemplateBtn.disabled = false;
 
-                // Render
+                updateUiForMode('exclude');
                 renderList();
                 saveStateToExtension();
                 break;
         }
     });
 
-    // --- HELPERS ---
-
     function saveStateToExtension() {
-        vscode.postMessage({
-            type: 'save-state',
-            state: appState // We send the WHOLE state object
-        });
+        vscode.postMessage({ type: 'save-state', state: appState });
     }
 
-    function createRuleItem(ruleValue, isChecked) {
-        const ruleItem = document.createElement('div');
-        ruleItem.className = 'rule-item';
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.id = ruleValue;
-        checkbox.value = ruleValue;
-        checkbox.checked = isChecked;
-        const label = document.createElement('label');
-        label.htmlFor = ruleValue;
-        label.textContent = ruleValue;
-        ruleItem.appendChild(checkbox);
-        ruleItem.appendChild(label);
-        return ruleItem;
-    }
-
-    function updateSelectAllState() {
-        const checkboxes = rulesContainer.querySelectorAll('input[type="checkbox"]');
+    function updateGlobalSelectAllState() {
+        const checkboxes = rulesContainer.querySelectorAll('.rule-cb');
         if (checkboxes.length === 0) return;
-        const allChecked = Array.from(checkboxes).every(cb => cb.checked);
-        selectAllCb.checked = allChecked;
+        selectAllCb.checked = Array.from(checkboxes).every(cb => cb.checked);
+    }
+
+    function updateGenerateButtonState() {
+        const checkedBoxes = rulesContainer.querySelectorAll('.rule-cb:checked');
+        const count = checkedBoxes.length;
+
+        if (count === 0) {
+            generateBtn.disabled = true;
+            generateBtn.title = "Select at least one item";
+        } else {
+            generateBtn.disabled = false;
+            generateBtn.title = "";
+        }
     }
 
 }());
@@ -658,8 +913,8 @@ button:disabled {
 {
   "name": "code-context-extractor",
   "displayName": "Code Context Extractor",
-  "description": "Used to extract code context into a txt file that can be used to feed AI ",
-  "version": "0.0.1",
+  "description": "Generates a single text file of your project context for LLMs. Supports both Whitelist and Blacklist modes with smart binary exclusion.",
+  "version": "1.0.0",
   "publisher": "ct-dev",
   "icon": "media/icon.png",
   "repository": {
@@ -671,11 +926,13 @@ button:disabled {
     "vscode": "^1.105.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "Machine Learning",
+    "Programming Languages"
   ],
   "activationEvents": [
     "onCommand:code-context-extractor.generate",
-    "onView:code-context-extractor-view" 
+    "onView:code-context-extractor-view"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -702,7 +959,7 @@ button:disabled {
             ".git",
             ".vscode"
           ],
-          "description": "List of directory names to exclude from the context file."
+          "description": "List of directory names to exclude by default in Exclude Mode."
         },
         "code-context-extractor.excludeFiles": {
           "type": "array",
@@ -712,9 +969,8 @@ button:disabled {
           "default": [
             "package-lock.json"
           ],
-          "description": "List of specific file names to exclude from the context file."
+          "description": "List of specific file names to exclude by default in Exclude Mode."
         }
-        
       }
     },
     "viewsContainers": {
@@ -727,15 +983,15 @@ button:disabled {
       ]
     },
     "views": {
-    "code-context-extractor-sidebar": [
-      {
-        "id": "code-context-extractor-view",
-        "name": "Generator",
-        "type": "webview",
-        "icon": "media/icon.svg"
-      }
-    ]
-  }
+      "code-context-extractor-sidebar": [
+        {
+          "id": "code-context-extractor-view",
+          "name": "Generator",
+          "type": "webview",
+          "icon": "media/icon.svg"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
@@ -771,42 +1027,46 @@ button:disabled {
   }
 }
 
+
 --- README.md ---
 # Code Context Extractor
 
-This Visual Studio Code extension helps you create a single text file containing your project's folder structure and the content of all relevant files. It's designed to make it easy to copy-paste your entire project's context into large language models (LLMs) like GPT-4, Claude, or Gemini.
+**Code Context Extractor** is a Visual Studio Code extension designed to streamline the process of feeding codebases into Large Language Models (LLMs) like GPT-4, Claude, or Gemini.
 
-## Features
+It generates a single, formatted text file (`ProjectContext.txt`) containing your project's folder structure and file contents, filtering out unnecessary noise.
 
-*   **Sidebar UI**: An easy-to-use interface right in the VS Code activity bar.
-*   **.gitignore Integration**: Automatically loads rules from your project's `.gitignore` file and your global VS Code settings to provide a smart starting point for exclusions.
-*   **Template Loading**: Choose from standard `.gitignore` templates (e.g., Node, Python, Go) to quickly add common ignore patterns for your project type.
-*   **Dynamic Filtering**: Easily review, modify, and add custom rules to fine-tune which files and folders are included in the final context file.
-*   **State Persistence**: Your list of ignore rules is saved per workspace, so you don't have to reconfigure it every time you open VS Code.
+## Key Features
+
+*   **Dual Modes**:
+    *   **Blacklist (Exclude) Mode**: Standard behavior. Everything is included by default; you select what to hide (e.g., `node_modules`, secrets, logs).
+    *   **Whitelist (Include) Mode**: Start with nothing. Select *only* the specific files or folders you want to share. Perfect for focused debugging.
+*   **.gitignore Integration**: Automatically imports rules from your project's `.gitignore` and VS Code settings.
+*   **Smart Binary Detection**: Automatically detects binary files (images, PDFs, executables) and excludes their raw content to prevent "garbage" text in your context file.
+*   **State Persistence**: Remembers your selection and mode between sessions, so you don't have to re-select files every time you restart VS Code.
+*   **GitHub Templates**: Built-in access to standard `.gitignore` templates (Node, Python, Go, etc.) for quick setup.
 
 ## How to Use
 
-1.  Click on the **Code Context Extractor** icon in the activity bar to open the sidebar.
-2.  Click **"Load / Refresh Ignore Rules"**. This will populate a list of files and folders to exclude based on your project's `.gitignore` and settings. You can also select a standard template to add more rules.
-3.  In "Step 2", review the list of rules. Uncheck any files or folders you *want* to include. Add any custom rules you need.
-4.  Click **"Generate Context File"**.
-5.  A `ProjectContext.txt` file will be created in the root of your workspace and automatically opened for you.
+1.  Open the **Code Context Extractor** view from the Activity Bar.
+2.  **Select a Mode**:
+    *   **Exclude Mode**: Click "Load .gitignore & Templates". Uncheck items you want to *keep*, check items you want to *hide*.
+    *   **Include Mode**: The list starts empty. Type folder names (e.g., `src/`) or file names to add them. Check items to *include* them.
+3.  **Review**: Toggle the checkboxes to fine-tune your selection.
+4.  **Generate**: Click **"Generate Context File"**.
+5.  A `ProjectContext.txt` file is created in your root directory and opened automatically.
 
 ## Extension Settings
 
-This extension contributes the following settings:
-
-*   `code-context-extractor.excludeDirs`: A list of directory names to always exclude (e.g., "node_modules", ".git").
-*   `code-context-extractor.excludeFiles`: A list of file names to always exclude (e.g., "package-lock.json").
+*   `code-context-extractor.excludeDirs`: Default directories to exclude in "Exclude Mode" (e.g., `.git`, `.vscode`).
+*   `code-context-extractor.excludeFiles`: Default files to exclude in "Exclude Mode" (e.g., `package-lock.json`).
 
 ## Release Notes
 
-### 0.0.1
-
-- Initial release of Code Context Extractor.
-- Added sidebar UI for generating context files.
-- Implemented .gitignore and settings integration.
-- Added GitHub .gitignore template fetching.
+### 0.0.2
+- Added **Whitelist (Include) Mode**.
+- Added **Binary File Detection** to prevent corruption of the output text file.
+- Improved UI with persistent state saving.
+- Fixed UI glitches with toggle buttons.
 
 --- src/contextGenerator.ts ---
 // src/contextGenerator.ts
@@ -971,6 +1231,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider)
     );
 
+    // COMMAND 1: Load Templates (Mostly for Exclude Mode)
     const loadTemplateCommand = vscode.commands.registerCommand('code-context-extractor.loadTemplateRules', async () => {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
@@ -983,6 +1244,7 @@ export function activate(context: vscode.ExtensionContext) {
         const templateRules = new Set<string>();
         let templateName = '';
 
+        // Helper to parse line-by-line
         const addRulesToSet = (content: string, ruleSet: Set<string>) => {
             content.split(/\r?\n/).forEach(line => {
                 const trimmed = line.trim();
@@ -992,7 +1254,7 @@ export function activate(context: vscode.ExtensionContext) {
             });
         };
 
-        // 1. Add rules from local .gitignore and settings
+        // 1. Add rules from local .gitignore and Settings
         const localGitignorePath = path.join(projectRoot, '.gitignore');
         if (fs.existsSync(localGitignorePath)) {
             const localGitignoreContent = fs.readFileSync(localGitignorePath, 'utf8');
@@ -1001,10 +1263,11 @@ export function activate(context: vscode.ExtensionContext) {
         const configuration = vscode.workspace.getConfiguration('code-context-extractor');
         const excludeDirs = configuration.get<string[]>('excludeDirs', []);
         const excludeFiles = configuration.get<string[]>('excludeFiles', []);
+        
         excludeDirs.map(dir => `${dir}/`).forEach(rule => localRules.add(rule));
         excludeFiles.forEach(rule => localRules.add(rule));
 
-        // 2. Ask user to select a template to add MORE rules
+        // 2. Ask user to select a GitHub template (Optional)
         const templates = await getAvailableTemplates();
         if (templates.length > 0) {
             const detected = await detectProjectTypes(projectRoot);
@@ -1039,26 +1302,27 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }
         
-        // --- CORE FIX: De-duplicate rules, giving priority to localRules ---
+        // De-duplicate: If a rule exists in local, don't show it as 'template'
         const finalTemplateRules = new Set<string>();
         templateRules.forEach(rule => {
             if (!localRules.has(rule)) {
                 finalTemplateRules.add(rule);
             }
         });
-        // --- END FIX ---
 
-        // Return a structured object with categorized rules
         return {
             local: Array.from(localRules).sort(),
             template: {
                 name: templateName,
-                rules: Array.from(finalTemplateRules).sort() // Use the de-duplicated set
+                rules: Array.from(finalTemplateRules).sort()
             }
         };
     });
 
-    // COMMAND 2: Generates the context file
+    /**
+     * COMMAND 2: Generate Context File
+     * Handles both 'exclude' (blacklist) and 'include' (whitelist) logic.
+     */
     const generateCommand = vscode.commands.registerCommand('code-context-extractor.generate', async (args?: { selectedRules?: string[], mode?: 'include' | 'exclude' }) => {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
@@ -1070,59 +1334,46 @@ export function activate(context: vscode.ExtensionContext) {
         
         const ig = ignore();
 
-        // ALWAYS exclude the output file itself to prevent infinite loops
+        // 1. Safety: Always exclude the output file itself
         ig.add('ProjectContext.txt');
 
         const mode = args?.mode || 'exclude';
         const rules = args?.selectedRules || [];
 
         if (mode === 'include') {
-            // --- INCLUDE MODE (WHITELIST) ---
-            // 1. Ignore everything by default
+            // --- WHITELIST STRATEGY ---
+            // 1. Ignore everything (*)
             ig.add('*'); 
             
-            // 2. Un-ignore (.gitignore syntax '!') the specific items selected
             if (rules.length > 0) {
                 rules.forEach(rule => {
-                    // Clean rule: remove existing '!' if passed by mistake, though UI shouldn't send it
                     const rawRule = rule.startsWith('!') ? rule.substring(1) : rule;
                     
-                    // Un-ignore the item itself
+                    // 2. Un-ignore (!) the specific item
                     ig.add(`!${rawRule}`);
 
-                    // CRITICAL: If it's a folder (ends in /), we must also un-ignore its contents recursively
-                    // otherwise "src/" is unignored, but "src/main.ts" remains ignored by the global "*"
+                    // 3. If it's a folder, recursively un-ignore contents (**)
                     if (rawRule.endsWith('/')) {
                         ig.add(`!${rawRule}**`);
                     }
                 });
             } else {
-                const decision = await vscode.window.showWarningMessage(
-                    "Include Mode is active, but no files are selected. The generated file will be empty.",
-                    { modal: true },
-                    'Generate Anyway', 'Cancel'
-                );
-                if (decision !== 'Generate Anyway') {
-                    return;
-                }
+                vscode.window.showWarningMessage("Include Mode: No files selected. Output will be empty.");
+                return;
             }
 
         } else {
-            // --- EXCLUDE MODE (BLACKLIST - Standard Behavior) ---
-            // Always exclude .git folder in standard mode
-            ig.add('.git/'); 
-
+            // --- BLACKLIST STRATEGY (Standard .gitignore) ---
+            ig.add('.git/'); // Always exclude .git metadata
+            
             if (rules.length > 0) {
                 ig.add(rules);
             } else {
                 const decision = await vscode.window.showWarningMessage(
-                    "No files/folders are selected for exclusion. This will include EVERYTHING (node_modules, etc). Do you want to continue?",
-                    { modal: true },
-                    'Yes, Continue'
+                    "Exclude Mode: No files selected. This will include EVERYTHING (including node_modules). Continue?",
+                    { modal: true }, 'Yes, Continue'
                 );
-                if (decision !== 'Yes, Continue') {
-                    return; 
-                }
+                if (decision !== 'Yes, Continue') return; 
             }
         }
         
@@ -1237,62 +1488,58 @@ import * as vscode from 'vscode';
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'code-context-extractor-view';
-
     private _view?: vscode.WebviewView;
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
-        private readonly _workspaceState: vscode.Memento // Add Memento to constructor
+        private readonly _workspaceState: vscode.Memento 
     ) {}
 
     public async resolveWebviewView(
-    webviewView: vscode.WebviewView,
-    context: vscode.WebviewViewResolveContext,
-    _token: vscode.CancellationToken,
-) {
-    this._view = webviewView;
+        webviewView: vscode.WebviewView,
+        context: vscode.WebviewViewResolveContext,
+        _token: vscode.CancellationToken,
+    ) {
+        this._view = webviewView;
 
-    webviewView.webview.options = {
-        enableScripts: true,
-        localResourceRoots: [this._extensionUri]
-    };
+        webviewView.webview.options = {
+            enableScripts: true,
+            localResourceRoots: [this._extensionUri]
+        };
 
-    webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+        webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
-    // On initial load, send any saved state to the webview
-    webviewView.onDidChangeVisibility(() => {
-        const savedState = this._workspaceState.get('sidebarState');
-        if (savedState) {
-            webviewView.webview.postMessage({ type: 'restore-state', state: savedState });
-        }
-    });
-
-    // Handle messages from the webview
-    webviewView.webview.onDidReceiveMessage(async (data) => {
-        switch (data.type) {
-            case 'generate': {
-                vscode.commands.executeCommand('code-context-extractor.generate', {
-                    selectedRules: data.rules,
-                    mode: data.mode
-                });
-                break;
-            }
-            case 'load-template': {
-                const rules = await vscode.commands.executeCommand<string[]>('code-context-extractor.loadTemplateRules');
-                if (rules && this._view) {
-                    this._view.webview.postMessage({ type: 'update-rules', rules: rules });
+        webviewView.webview.onDidReceiveMessage(async (data) => {
+            switch (data.type) {
+                // Restore state when Webview reports it is ready
+                case 'webview-ready': {
+                    const savedState = this._workspaceState.get('sidebarState');
+                    if (savedState) {
+                        this._view?.webview.postMessage({ type: 'restore-state', state: savedState });
+                    }
+                    break;
                 }
-                break;
+                case 'generate': {
+                    vscode.commands.executeCommand('code-context-extractor.generate', {
+                        selectedRules: data.rules,
+                        mode: data.mode
+                    });
+                    break;
+                }
+                case 'load-template': {
+                    const rules = await vscode.commands.executeCommand<string[]>('code-context-extractor.loadTemplateRules');
+                    if (rules && this._view) {
+                        this._view.webview.postMessage({ type: 'update-rules', rules: rules });
+                    }
+                    break;
+                }
+                case 'save-state': {
+                    await this._workspaceState.update('sidebarState', data.state);
+                    break;
+                }
             }
-            // NEW: Listen for state changes from the UI and save them
-            case 'save-state': {
-                await this._workspaceState.update('sidebarState', data.state);
-                break;
-            }
-        }
-    });
-}
-
+        });
+    }
 
     private _getHtmlForWebview(webview: vscode.Webview) {
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'main.js'));
@@ -1311,36 +1558,34 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <body>
                 <h2>Context Generator</h2>
                 
-                <!-- STEP 1: MODE SELECTION -->
+                <!-- MODE TOGGLE -->
                 <div class="toggle-container">
                     <button id="btn-mode-exclude" class="toggle-btn active">Exclude Mode</button>
                     <button id="btn-mode-include" class="toggle-btn">Include Mode</button>
                 </div>
 
-                <!-- DESCRIPTION AREA (Dynamic) -->
                 <p id="mode-description" class="description">
-                    <strong>Blacklist:</strong> Select files you want to <em>hide</em> from the AI.
+                    <strong>Blacklist:</strong> Select files you want to <em>hide</em>.
                 </p>
 
                 <hr>
 
-                <!-- EXCLUDE MODE SPECIFIC: Load Templates -->
+                <!-- EXCLUDE CONTROLS -->
                 <div id="exclude-controls">
                     <h4 class="section-header">1. Load Ignore Rules</h4>
                     <button id="load-template-btn">Load .gitignore & Templates</button>
                 </div>
 
-                <!-- INCLUDE MODE SPECIFIC: Manual Entry -->
+                <!-- INCLUDE CONTROLS -->
                 <div id="include-controls" class="hidden">
                     <h4 class="section-header">1. Add Files to Include</h4>
                     <p class="description">Start empty. Add specific folders (e.g., <code>src/</code>) or files you strictly need.</p>
                 </div>
 
-                <!-- SHARED: Rule Management -->
+                <!-- LIST MANAGEMENT -->
                 <div id="rules-section" class="hidden">
                     <h4 class="section-header" id="list-header">2. Manage List</h4>
                     
-                    <!-- Add Rule Input (Always visible in Include mode, visible after load in Exclude mode) -->
                     <div id="add-rule-container">
                         <input type="text" id="new-rule-input" placeholder="e.g. src/ or *.ts"/>
                         <button id="add-rule-btn">+</button>
@@ -1351,15 +1596,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         <label for="select-all-cb">Select / Deselect All</label>
                     </div>
                     
-                    <div id="rules-container">
-                        <!-- List items go here -->
-                    </div>
+                    <div id="rules-container"></div>
                 </div>
 
-                <!-- SHARED: Generate Button -->
+                <!-- GENERATE ACTION -->
                 <div id="generate-section">
                     <hr>
-                    <button id="generate-btn">Generate Context File</button>
+                    <button id="generate-btn" disabled>Generate Context File</button>
                 </div>
 
                 <script nonce="${nonce}" src="${scriptUri}"></script>

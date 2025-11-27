@@ -157,7 +157,9 @@ export function activate(context: vscode.ExtensionContext) {
                     "Exclude Mode: No files selected. This will include EVERYTHING (including node_modules). Continue?",
                     { modal: true }, 'Yes, Continue'
                 );
-                if (decision !== 'Yes, Continue') return; 
+                if (decision !== 'Yes, Continue') {
+                    return;
+                } 
             }
         }
         
