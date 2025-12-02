@@ -28,6 +28,8 @@ It generates a single, formatted text file (`ProjectContext.txt`) containing you
     *   **Custom Rules**: Type a folder or file name (e.g., `temp/` or `*.log`) and press Enter to add it. You can delete these later using the **×** button.
 4.  Click **"Generate Context File"**.
 
+![Exclude Mode UI](images/exclude-mode.png)
+
 ### Mode 2: Include (Whitelist)
 *Use this when you want to focus on a specific feature.*
 
@@ -37,11 +39,15 @@ It generates a single, formatted text file (`ProjectContext.txt`) containing you
 4.  Only the items in this list (and their contents) will be written to the output file.
 5.  Click **"Generate Context File"**.
 
+![Include Mode UI](images/include-mode.png)
+
 ## Output
 
 A `ProjectContext.txt` file is created in your root directory and opened automatically. It contains:
 1.  A visual tree of your folder structure.
 2.  The text content of every allowed file, formatted with headers for easy LLM parsing.
+
+![Output Preview](images/output-preview.png)
 
 ## Extension Settings
 
@@ -53,7 +59,7 @@ This extension contributes the following settings:
 
 ## Release Notes
 
-### 1.1.0
+### 1.2.0
 - **Major Feature Update**:
     - Introduced **Whitelist (Include) Mode** for targeted context extraction.
     - Added **Binary File Detection** to prevent binary content corruption.
