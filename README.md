@@ -59,7 +59,7 @@ This extension contributes the following settings:
 
 ## Release Notes
 
-### 1.2.0
+### 1.3.0
 - **Major Feature Update**:
     - Introduced **Whitelist (Include) Mode** for targeted context extraction.
     - Added **Binary File Detection** to prevent binary content corruption.

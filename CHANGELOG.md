@@ -4,7 +4,7 @@ All notable changes to the "code-context-extractor" extension will be documented
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [1.2.0]
+## [1.3.0]
 
 ### Added
 - **Whitelist (Include) Mode**: Added a new mode to start with an empty context and strictly select specific files or folders to include.
