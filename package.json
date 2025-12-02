@@ -2,7 +2,7 @@
   "name": "code-context-extractor",
   "displayName": "Code Context Extractor",
   "description": "Generates a single text file of your project context for LLMs. Supports both Whitelist and Blacklist modes with smart binary exclusion.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "publisher": "ct-dev",
   "icon": "media/icon.png",
   "repository": {
