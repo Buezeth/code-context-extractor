@@ -15,7 +15,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider)
     );
 
-    // COMMAND 1: Load Templates
+    // --- COMMAND 1: Load Templates ---
     const loadTemplateCommand = vscode.commands.registerCommand('code-context-extractor.loadTemplateRules', async () => {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
@@ -37,11 +37,14 @@ export function activate(context: vscode.ExtensionContext) {
             });
         };
 
+        // Local .gitignore
         const localGitignorePath = path.join(projectRoot, '.gitignore');
         if (fs.existsSync(localGitignorePath)) {
             const localGitignoreContent = fs.readFileSync(localGitignorePath, 'utf8');
             addRulesToSet(localGitignoreContent, localRules);
         }
+        
+        // Settings
         const configuration = vscode.workspace.getConfiguration('code-context-extractor');
         const excludeDirs = configuration.get<string[]>('excludeDirs', []);
         const excludeFiles = configuration.get<string[]>('excludeFiles', []);
@@ -49,6 +52,7 @@ export function activate(context: vscode.ExtensionContext) {
         excludeDirs.map(dir => `${dir}/`).forEach(rule => localRules.add(rule));
         excludeFiles.forEach(rule => localRules.add(rule));
 
+        // GitHub Templates
         const templates = await getAvailableTemplates();
         if (templates.length > 0) {
             const detected = await detectProjectTypes(projectRoot);
@@ -99,7 +103,7 @@ export function activate(context: vscode.ExtensionContext) {
         };
     });
 
-    // COMMAND 2: Generate Context File
+    // --- COMMAND 2: Generate Context File ---
     const generateCommand = vscode.commands.registerCommand('code-context-extractor.generate', async (args?: { selectedRules?: string[], mode?: 'include' | 'exclude' }) => {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
@@ -110,14 +114,14 @@ export function activate(context: vscode.ExtensionContext) {
         const outputFilePath = path.join(projectRoot, 'ProjectContext.txt');
         
         const ig = ignore();
-        ig.add('ProjectContext.txt'); // Always exclude output file
+        ig.add('ProjectContext.txt'); 
 
         const mode = args?.mode || 'exclude';
         const rules = args?.selectedRules || [];
 
         if (mode === 'include') {
             // --- WHITELIST STRATEGY ---
-            ig.add('*'); // 1. Start by ignoring everything
+            ig.add('*'); // Ignore everything by default
 
             if (rules.length > 0) {
                 await vscode.window.withProgress({
@@ -127,53 +131,76 @@ export function activate(context: vscode.ExtensionContext) {
                 }, async () => {
                     const unignoreRules = new Set<string>();
 
+                    // Helper to un-ignore a specific path and ALL its parents
+                    const allowPathAndParents = (relativePath: string, isDirectory: boolean) => {
+                        const parts = relativePath.split('/');
+                        let currentPath = '';
+                        
+                        // 1. Un-ignore all parents (so walker can descend)
+                        for (let i = 0; i < parts.length - 1; i++) {
+                            currentPath += parts[i] + '/';
+                            unignoreRules.add(`!${currentPath}`); 
+                        }
+
+                        // 2. Un-ignore the target itself
+                        unignoreRules.add(`!${relativePath}`);
+
+                        // 3. If it's a directory, allow its contents
+                        if (isDirectory) {
+                            // ensure trailing slash for directory targeting
+                            const dirPath = relativePath.endsWith('/') ? relativePath : relativePath + '/';
+                            unignoreRules.add(`!${dirPath}`);
+                            unignoreRules.add(`!${dirPath}**`); // Recursive match inside
+                        }
+                    };
+
                     for (const rule of rules) {
-                        const cleanRule = rule.trim().replace(/\\/g, '/');
+                        // Normalize slashes (Windows \ -> /)
+                        let cleanRule = rule.trim().replace(/\\/g, '/');
                         if (!cleanRule) continue;
 
-                        // 2. Resolve where these files actually are.
-                        // If user typed "migrations/", we search for "**/migrations/**"
-                        // If user typed "*.sql", we search for "**/*.sql"
-                        let searchPattern = cleanRule;
-                        if (!searchPattern.startsWith('**/') && !searchPattern.startsWith('/')) {
-                            searchPattern = '**/' + searchPattern;
-                        }
-                        // If it looks like a folder, ensure we capture contents
-                        if (searchPattern.endsWith('/')) {
-                            searchPattern = searchPattern + '**';
+                        // Check if this is a concrete file/folder on disk
+                        const absolutePath = path.join(projectRoot, cleanRule);
+                        
+                        let exists = false;
+                        let isDir = false;
+
+                        try {
+                            const stat = fs.statSync(absolutePath);
+                            exists = true;
+                            isDir = stat.isDirectory();
+                        } catch (e) {
+                            exists = false;
                         }
 
-                        // Use VS Code API to find actual files matching the rule
-                        const foundUris = await vscode.workspace.findFiles(searchPattern, null, 500); // Limit to 500 to prevent freeze
-
-                        for (const uri of foundUris) {
-                            // Convert absolute path to relative path (e.g., "pkg/platform/database/migrations/up.sql")
-                            const relativePath = path.relative(projectRoot, uri.fsPath).replace(/\\/g, '/');
-                            
-                            // 3. CRITICAL: Un-ignore every parent directory leading to this file.
-                            // If we don't, the scanner stops at "pkg/" because "*" ignored it.
-                            const parts = relativePath.split('/');
-                            let pathBuilder = '';
-                            
-                            for (let i = 0; i < parts.length - 1; i++) {
-                                pathBuilder += parts[i] + '/';
-                                unignoreRules.add(`!${pathBuilder}`); // e.g., !pkg/, !pkg/platform/
+                        if (exists) {
+                            // --- DIRECT PATH STRATEGY ---
+                            // If user typed "pkg/configs", we know it's a folder.
+                            allowPathAndParents(cleanRule, isDir);
+                        } else {
+                            // --- WILDCARD/SEARCH STRATEGY ---
+                            // User typed "*.sql" or a path that we couldn't resolve directly
+                            // Use findFiles to locate matches
+                            let searchPattern = cleanRule;
+                            if (!searchPattern.startsWith('**/') && !searchPattern.startsWith('/')) {
+                                searchPattern = '**/' + searchPattern;
                             }
                             
-                            // 4. Un-ignore the file itself
-                            unignoreRules.add(`!${relativePath}`);
-                        }
-
-                        // Fallback: If VS Code found nothing (maybe new file?), add the raw rule just in case
-                        if (foundUris.length === 0) {
-                            unignoreRules.add(`!${cleanRule}`);
-                            if (cleanRule.endsWith('/')) {
-                                unignoreRules.add(`!${cleanRule}**`);
+                            const foundUris = await vscode.workspace.findFiles(searchPattern, null, 500);
+                            
+                            if (foundUris.length > 0) {
+                                for (const uri of foundUris) {
+                                    const relPath = path.relative(projectRoot, uri.fsPath).replace(/\\/g, '/');
+                                    // Treat results from findFiles as files usually, but the logic handles parents
+                                    allowPathAndParents(relPath, false); 
+                                }
+                            } else {
+                                // Fallback: just add the rule blindly if we couldn't find it
+                                unignoreRules.add(`!${cleanRule}`);
                             }
                         }
                     }
 
-                    // Apply all collected un-ignore rules
                     ig.add(Array.from(unignoreRules));
                 });
             } else {
@@ -188,7 +215,7 @@ export function activate(context: vscode.ExtensionContext) {
                 ig.add(rules);
             } else {
                 const decision = await vscode.window.showWarningMessage(
-                    "Exclude Mode: No files selected. This will include EVERYTHING (including node_modules). Continue?",
+                    "Exclude Mode: No files selected. This will include EVERYTHING. Continue?",
                     { modal: true }, 'Yes, Continue'
                 );
                 if (decision !== 'Yes, Continue') return;
