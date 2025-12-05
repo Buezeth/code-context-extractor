@@ -132,7 +132,7 @@ export function activate(context: vscode.ExtensionContext) {
                         const parts = relativePath.split('/');
                         let currentPath = '';
                         
-                        // 1. Un-ignore all parents
+                        // 1. Un-ignore all parents (Recursion Fix)
                         for (let i = 0; i < parts.length - 1; i++) {
                             currentPath += parts[i] + '/';
                             unignoreRules.add(`!${currentPath}`); 
@@ -150,10 +150,10 @@ export function activate(context: vscode.ExtensionContext) {
                     };
 
                     for (const rule of rules) {
-                        let cleanRule = rule.trim().replace(/\\/g, '/');
+                        let cleanRule = rule.trim().replace(/\\/g, '/'); // Normalize slashes for Include too
                         if (!cleanRule) continue;
 
-                        // Strategy A: Direct Path (Exact match at root or relative path provided by user)
+                        // Check existence on disk (Direct Path Strategy)
                         const absolutePath = path.join(projectRoot, cleanRule);
                         let exists = false;
                         let isDir = false;
@@ -165,24 +165,19 @@ export function activate(context: vscode.ExtensionContext) {
                         } catch (e) { exists = false; }
 
                         if (exists) {
+                            // If user typed specific path that exists (e.g. pkg/routes/main.go)
                             allowPathAndParents(cleanRule, isDir);
                         } else {
-                            // Strategy B: Deep Search (Wildcard or Deep Folder)
+                            // Deep Search Strategy (Finds deep folders like 'migrations/')
                             let searchPatterns: string[] = [];
 
                             if (cleanRule.endsWith('/')) {
-                                // Input is explicit directory: "migrations/"
-                                // Search for: "**/migrations/**" (Find files INSIDE to locate the folder)
-                                // Note: We remove leading **/ if user typed it, to standardize
                                 const coreName = cleanRule.replace(/^\*\*\//, '');
                                 searchPatterns.push(`**/${coreName}**`);
                             } else if (!cleanRule.includes('/')) {
-                                // Input is just a name: "migrations"
-                                // It could be a file OR a folder.
-                                searchPatterns.push(`**/${cleanRule}`);      // File
-                                searchPatterns.push(`**/${cleanRule}/**`);   // Folder content
+                                searchPatterns.push(`**/${cleanRule}`);
+                                searchPatterns.push(`**/${cleanRule}/**`);
                             } else {
-                                // Input is specific path: "some/path.ts"
                                 if (!cleanRule.startsWith('**/')) {
                                     searchPatterns.push(`**/${cleanRule}`);
                                 } else {
@@ -190,7 +185,6 @@ export function activate(context: vscode.ExtensionContext) {
                                 }
                             }
                             
-                            // Execute Search
                             let foundAny = false;
                             for (const pattern of searchPatterns) {
                                 const foundUris = await vscode.workspace.findFiles(pattern, null, 500);
@@ -198,14 +192,11 @@ export function activate(context: vscode.ExtensionContext) {
                                     foundAny = true;
                                     for (const uri of foundUris) {
                                         const relPath = path.relative(projectRoot, uri.fsPath).replace(/\\/g, '/');
-                                        // Treat findFiles results as files (false flag)
-                                        // This works because allowPathAndParents extracts the directory structure anyway
                                         allowPathAndParents(relPath, false);
                                     }
                                 }
                             }
 
-                            // Fallback if search returns nothing (maybe it's a new file not on disk yet)
                             if (!foundAny) {
                                 unignoreRules.add(`!${cleanRule}`);
                             }
@@ -222,8 +213,13 @@ export function activate(context: vscode.ExtensionContext) {
         } else {
             // --- BLACKLIST STRATEGY ---
             ig.add('.git/');
+            
             if (rules.length > 0) {
-                ig.add(rules);
+                // --- EXCLUDE MODE FIX: Handle Backslashes ---
+                // If user copies 'platform\migrations' on Windows, we convert to 'platform/migrations'
+                // The 'ignore' library requires forward slashes to match correctly.
+                const normalizedRules = rules.map(r => r.trim().replace(/\\/g, '/'));
+                ig.add(normalizedRules);
             } else {
                 const decision = await vscode.window.showWarningMessage(
                     "Exclude Mode: No files selected. This will include EVERYTHING. Continue?",
