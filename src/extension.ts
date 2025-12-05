@@ -15,7 +15,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider)
     );
 
-    // COMMAND 1: Load Templates (Mostly for Exclude Mode)
+    // COMMAND 1: Load Templates
     const loadTemplateCommand = vscode.commands.registerCommand('code-context-extractor.loadTemplateRules', async () => {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
@@ -28,7 +28,6 @@ export function activate(context: vscode.ExtensionContext) {
         const templateRules = new Set<string>();
         let templateName = '';
 
-        // Helper to parse line-by-line
         const addRulesToSet = (content: string, ruleSet: Set<string>) => {
             content.split(/\r?\n/).forEach(line => {
                 const trimmed = line.trim();
@@ -38,7 +37,6 @@ export function activate(context: vscode.ExtensionContext) {
             });
         };
 
-        // 1. Add rules from local .gitignore and Settings
         const localGitignorePath = path.join(projectRoot, '.gitignore');
         if (fs.existsSync(localGitignorePath)) {
             const localGitignoreContent = fs.readFileSync(localGitignorePath, 'utf8');
@@ -51,7 +49,6 @@ export function activate(context: vscode.ExtensionContext) {
         excludeDirs.map(dir => `${dir}/`).forEach(rule => localRules.add(rule));
         excludeFiles.forEach(rule => localRules.add(rule));
 
-        // 2. Ask user to select a GitHub template (Optional)
         const templates = await getAvailableTemplates();
         if (templates.length > 0) {
             const detected = await detectProjectTypes(projectRoot);
@@ -86,7 +83,6 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }
         
-        // De-duplicate: If a rule exists in local, don't show it as 'template'
         const finalTemplateRules = new Set<string>();
         templateRules.forEach(rule => {
             if (!localRules.has(rule)) {
@@ -103,10 +99,7 @@ export function activate(context: vscode.ExtensionContext) {
         };
     });
 
-    /**
-     * COMMAND 2: Generate Context File
-     * Handles both 'exclude' (blacklist) and 'include' (whitelist) logic.
-     */
+    // COMMAND 2: Generate Context File
     const generateCommand = vscode.commands.registerCommand('code-context-extractor.generate', async (args?: { selectedRules?: string[], mode?: 'include' | 'exclude' }) => {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
@@ -117,29 +110,71 @@ export function activate(context: vscode.ExtensionContext) {
         const outputFilePath = path.join(projectRoot, 'ProjectContext.txt');
         
         const ig = ignore();
-
-        // 1. Safety: Always exclude the output file itself
-        ig.add('ProjectContext.txt');
+        ig.add('ProjectContext.txt'); // Always exclude output file
 
         const mode = args?.mode || 'exclude';
         const rules = args?.selectedRules || [];
 
         if (mode === 'include') {
             // --- WHITELIST STRATEGY ---
-            // 1. Ignore everything (*)
-            ig.add('*'); 
-            
-            if (rules.length > 0) {
-                rules.forEach(rule => {
-                    const rawRule = rule.startsWith('!') ? rule.substring(1) : rule;
-                    
-                    // 2. Un-ignore (!) the specific item
-                    ig.add(`!${rawRule}`);
+            ig.add('*'); // 1. Start by ignoring everything
 
-                    // 3. If it's a folder, recursively un-ignore contents (**)
-                    if (rawRule.endsWith('/')) {
-                        ig.add(`!${rawRule}**`);
+            if (rules.length > 0) {
+                await vscode.window.withProgress({
+                    location: vscode.ProgressLocation.Notification,
+                    title: `Resolving Include Paths...`,
+                    cancellable: false
+                }, async () => {
+                    const unignoreRules = new Set<string>();
+
+                    for (const rule of rules) {
+                        const cleanRule = rule.trim().replace(/\\/g, '/');
+                        if (!cleanRule) continue;
+
+                        // 2. Resolve where these files actually are.
+                        // If user typed "migrations/", we search for "**/migrations/**"
+                        // If user typed "*.sql", we search for "**/*.sql"
+                        let searchPattern = cleanRule;
+                        if (!searchPattern.startsWith('**/') && !searchPattern.startsWith('/')) {
+                            searchPattern = '**/' + searchPattern;
+                        }
+                        // If it looks like a folder, ensure we capture contents
+                        if (searchPattern.endsWith('/')) {
+                            searchPattern = searchPattern + '**';
+                        }
+
+                        // Use VS Code API to find actual files matching the rule
+                        const foundUris = await vscode.workspace.findFiles(searchPattern, null, 500); // Limit to 500 to prevent freeze
+
+                        for (const uri of foundUris) {
+                            // Convert absolute path to relative path (e.g., "pkg/platform/database/migrations/up.sql")
+                            const relativePath = path.relative(projectRoot, uri.fsPath).replace(/\\/g, '/');
+                            
+                            // 3. CRITICAL: Un-ignore every parent directory leading to this file.
+                            // If we don't, the scanner stops at "pkg/" because "*" ignored it.
+                            const parts = relativePath.split('/');
+                            let pathBuilder = '';
+                            
+                            for (let i = 0; i < parts.length - 1; i++) {
+                                pathBuilder += parts[i] + '/';
+                                unignoreRules.add(`!${pathBuilder}`); // e.g., !pkg/, !pkg/platform/
+                            }
+                            
+                            // 4. Un-ignore the file itself
+                            unignoreRules.add(`!${relativePath}`);
+                        }
+
+                        // Fallback: If VS Code found nothing (maybe new file?), add the raw rule just in case
+                        if (foundUris.length === 0) {
+                            unignoreRules.add(`!${cleanRule}`);
+                            if (cleanRule.endsWith('/')) {
+                                unignoreRules.add(`!${cleanRule}**`);
+                            }
+                        }
                     }
+
+                    // Apply all collected un-ignore rules
+                    ig.add(Array.from(unignoreRules));
                 });
             } else {
                 vscode.window.showWarningMessage("Include Mode: No files selected. Output will be empty.");
@@ -147,9 +182,8 @@ export function activate(context: vscode.ExtensionContext) {
             }
 
         } else {
-            // --- BLACKLIST STRATEGY (Standard .gitignore) ---
-            ig.add('.git/'); // Always exclude .git metadata
-            
+            // --- BLACKLIST STRATEGY ---
+            ig.add('.git/');
             if (rules.length > 0) {
                 ig.add(rules);
             } else {
@@ -157,9 +191,7 @@ export function activate(context: vscode.ExtensionContext) {
                     "Exclude Mode: No files selected. This will include EVERYTHING (including node_modules). Continue?",
                     { modal: true }, 'Yes, Continue'
                 );
-                if (decision !== 'Yes, Continue') {
-                    return;
-                } 
+                if (decision !== 'Yes, Continue') return;
             }
         }
         
