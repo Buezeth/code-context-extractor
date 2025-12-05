@@ -9,6 +9,7 @@ It generates a single, formatted text file (`ProjectContext.txt`) containing you
 *   **Dual Operation Modes**:
     *   **Blacklist (Exclude) Mode**: Best for general project context. Everything is included by default; you select what to hide (e.g., `node_modules`, secrets, logs).
     *   **Whitelist (Include) Mode**: Best for specific tasks. Start with nothing. Select *only* the specific files or folders you need for a specific bug or feature.
+*   **Smart Path Resolution**: In Include mode, the extension now supports **relative paths** (e.g., `pkg/routes/main.go`), deep folder search (e.g., `migrations/`), and wildcards. It automatically handles un-ignoring parent directories so you don't have to manually select the whole tree.
 *   **Smart Grouping**: In Exclude mode, rules are organized into "Imported Rules" (from `.gitignore`/Templates) and "Custom Rules" for better manageability.
 *   **Binary File Detection**: Automatically detects binary files (images, PDFs, executables) and excludes their raw content to prevent "garbage" text in your context file.
 *   **GitHub Templates**: Built-in access to standard `.gitignore` templates (Node, Python, Go, etc.) for quick setup.
@@ -35,7 +36,10 @@ It generates a single, formatted text file (`ProjectContext.txt`) containing you
 
 1.  Select **"Include Mode"** at the top.
 2.  The list starts empty (everything is ignored by default).
-3.  **Add Files**: Type specific folder names (e.g., `src/utils/`) or file names (e.g., `package.json`) and press Enter.
+3.  **Add Files or Paths**: You can input:
+    *   **Relative Paths**: e.g., `pkg/routes/public_route.go` (includes specifically this file).
+    *   **Folder Names**: e.g., `migrations/` (finds and includes this folder and its contents, even if deeply nested).
+    *   **Wildcards**: e.g., `*.sql` or `src/**/*.ts`.
 4.  Only the items in this list (and their contents) will be written to the output file.
 5.  Click **"Generate Context File"**.
 
@@ -58,6 +62,11 @@ This extension contributes the following settings:
 *   `code-context-extractor.useGitignoreTemplates`: Enable/Disable the GitHub template fetcher.
 
 ## Release Notes
+
+### 1.4.0
+- **Smart Path Resolution**: Include Mode now supports full relative paths (e.g., `pkg/routes/file.go`).
+- **Deep Folder Search**: Fixed logic where deep folders (e.g., `migrations/`) were ignored. The extension now automatically detects and un-ignores the parent directory chain.
+- **Improved UI**: UI text updated to clarify that relative paths and wildcards are supported.
 
 ### 1.3.0
 - **Major Feature Update**:

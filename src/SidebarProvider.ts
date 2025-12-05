@@ -95,7 +95,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 <!-- INCLUDE CONTROLS -->
                 <div id="include-controls" class="hidden">
                     <h4 class="section-header">1. Add Files to Include</h4>
-                    <p class="description">Start empty. Add specific folders (e.g., <code>src/</code>) or files you strictly need.</p>
+                    <p class="description">
+                        Start empty. Add <strong>folder names</strong> (e.g. <code>migrations/</code>), 
+                        <strong>wildcards</strong> (e.g. <code>*.go</code>), or 
+                        <strong>relative paths</strong> (e.g. <code>pkg/routes/route.go</code>).
+                    </p>
                 </div>
 
                 <!-- LIST MANAGEMENT -->
@@ -103,7 +107,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     <h4 class="section-header" id="list-header">2. Manage List</h4>
                     
                     <div id="add-rule-container">
-                        <input type="text" id="new-rule-input" placeholder="e.g. src/ or *.ts"/>
+                        <input type="text" id="new-rule-input" placeholder="e.g. pkg/ or *.go"/>
                         <button id="add-rule-btn">+</button>
                     </div>
 
