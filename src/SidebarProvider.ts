@@ -96,9 +96,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 <div id="include-controls" class="hidden">
                     <h4 class="section-header">1. Add Files to Include</h4>
                     <p class="description">
-                        Start empty. Add <strong>folder names</strong> (e.g. <code>migrations/</code>), 
-                        <strong>wildcards</strong> (e.g. <code>*.go</code>), or 
-                        <strong>relative paths</strong> (e.g. <code>pkg/routes/route.go</code>).
+                        Start empty. Add <strong>folder names</strong> (e.g. <i>migrations/</i>), 
+                        <strong>wildcards</strong> (e.g. <i>*.go</i>), or 
+                        <strong>relative paths</strong> (e.g. <i>pkg/routes/route.go</i>).
                     </p>
                 </div>
 
